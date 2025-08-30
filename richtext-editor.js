@@ -36,11 +36,22 @@ class RichTextEditor {
     this.toggleFormat('underline');
   }
 
+  strikethrough() {
+    this.toggleFormat('strikethrough');
+  }
+
+
+  highlight(value = '#ffff00') {
+    this.toggleFormat('highlight', value);
+  }
+
   /**
    * Generic format toggler
    * @param {string} format - e.g. 'bold', 'italic', 'underline', etc.
+   * @param {string|undefined} value - optional value for the format (e.g. color)
    */
-  toggleFormat(format) {
+  toggleFormat(format, value) {
+    const valueKey = format + 'Value';
     const sel = this._getSelectionOffsets();
     if (!sel) return;
     const { start, end } = sel;
@@ -84,8 +95,12 @@ class RichTextEditor {
         let newSpan = { ...span, text: selectedText };
         if (shouldAdd) {
           newSpan[format] = true;
+          if (typeof value !== 'undefined') {
+            newSpan[valueKey] = value;
+          }
         } else {
           delete newSpan[format];
+          delete newSpan[valueKey];
         }
         newModel.push(newSpan);
         if (spanEnd > end) {
@@ -125,11 +140,22 @@ class RichTextEditor {
     let html = '';
     for (const span of this.model) {
       let classList = [];
+      let styleList = [];
       for (const key of Object.keys(span)) {
-        if (key !== 'text' && span[key]) classList.push(key);
+        if (key === 'text') continue;
+        if (key.endsWith('Value')) {
+          // e.g. highlightValue -> --highlight: #ff0;
+          const format = key.slice(0, -5);
+          if (span[format]) {
+            styleList.push(`--${format}: ${span[key]}`);
+          }
+        } else if (span[key]) {
+          classList.push(key);
+        }
       }
       const classAttr = classList.length ? ` class="${classList.join(' ')}"` : '';
-      html += `<span${classAttr}>${this._escapeHTML(span.text)}</span>`;
+      const styleAttr = styleList.length ? ` style="${styleList.join('; ')};"` : '';
+      html += `<span${classAttr}${styleAttr}>${this._escapeHTML(span.text)}</span>`;
     }
     this.el.innerHTML = html || '<br>';
     // Restore selection

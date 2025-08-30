@@ -11,6 +11,9 @@
     <button type="button" id="bold-btn"><b>B</b></button>
     <button type="button" id="italic-btn"><i>I</i></button>
     <button type="button" id="underline-btn"><u>U</u></button>
+    <button type="button" id="strikethrough-btn"><s>S</s></button>
+    <button type="button" id="highlight-btn-1">Highlight Red</button>
+    <button type="button" id="highlight-btn-2">Highlight Blue</button>
     <!-- Add more buttons here -->
   </div>
   <div id="editor" class="richtext-editor" contenteditable="true"></div>
@@ -21,6 +24,9 @@
     document.getElementById('bold-btn').onclick = () => editor.bold();
     document.getElementById('italic-btn').onclick = () => editor.italic();
     document.getElementById('underline-btn').onclick = () => editor.underline();
+    document.getElementById('strikethrough-btn').onclick = () => editor.strikethrough();
+    document.getElementById('highlight-btn-1').onclick = () => editor.highlight('#ff0000');
+    document.getElementById('highlight-btn-2').onclick = () => editor.highlight('#0000ff');
   </script>
 </body>
 </html>

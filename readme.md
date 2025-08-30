@@ -57,36 +57,48 @@ Want to add your own formats?
 ----------------------------
 It's super easy now. All formatting is handled by classes, so you can add any format you want (like `code`, `highlight`, `red`, etc) and style it in CSS.
 
-How to add a new format (example: highlight):
 
-1. Add a method to the class:
+How to add a new format (with or without a value):
 
-	```js
-	highlight() {
-	  this.toggleFormat('highlight');
-	}
-	```
+1. Add a method to the class (with optional value):
+
+```js
+// With a value (e.g. color)
+highlight(color = '#ffff00') {
+	this.toggleFormat('highlight', color);
+}
+// Or without a value
+code() {
+	this.toggleFormat('code');
+}
+```
 
 2. Add a button in your HTML and hook it up:
 
-	```html
-	<button onclick="editor.highlight()">Highlight</button>
-	```
+```html
+<button onclick="editor.highlight('#ff0000')">Highlight Red</button>
+<button onclick="editor.highlight('#0000ff')">Highlight Blue</button>
+```
 
-3. Add a CSS rule for the class:
+3. Add a CSS rule for the class, using the CSS variable if you want:
 
-	```css
-	.highlight {
-	  background: yellow;
-	}
-	```
+```css
+.highlight {
+	background: var(--highlight, yellow); /* fallback to yellow if not set */
+}
+/* You can add more, e.g. custom font size: */
+.customfontsize {
+	font-size: var(--customfontsize, 24px);
+}
+```
 
-That's it! When you call `editor.highlight()`, it will toggle the `highlight` class on the selected text. You can add as many as you want, and style them however you like.
+That's it! When you call `editor.highlight('#ff0000')`, it will toggle the `highlight` class and set the CSS variable `--highlight: #ff0000;` on the selected text. You can add as many as you want, and style them however you like. If you don't pass a value, no CSS variable is set.
+
 
 How does it work?
 -----------------
-- Each format is just a key in the model (e.g. `{ text: 'foo', bold: true, highlight: true }`).
-- When rendering, all formats are turned into classes on a `<span>`, so you can style them in CSS.
+- Each format is just a key in the model (e.g. `{ text: 'foo', bold: true, highlight: true, highlightValue: '#ff0000' }`).
+- When rendering, all formats are turned into classes on a `<span>`, and any value is turned into a CSS variable (e.g. `style="--highlight: #ff0000;"`).
 - The `toggleFormat` method does all the logic for you—no need to change the rendering or model code.
 
 That's it. Enjoy!

@@ -46,3 +46,9 @@ body {
 .underline{
     text-decoration: underline;
 }
+.strikethrough{
+    text-decoration: line-through;
+}
+.highlight{
+    background-color: var(--highlight);
+}
