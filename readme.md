@@ -1,6 +1,10 @@
 Rich Text Editor
 ===============================================
 
+Preview it [here](https://mjdaws0n.github.io/Rich-Text-Editor/example.html)
+
+https://mjdaws0n.github.io/Rich-Text-Editor/example.html
+
 What is this?
 -------------
 It's a rich text editor. You can bold, italic, and type stuff. It works off a JSON model, not the DOM, so it's less likely to break in weird ways. You can select text, hit bold or italic, and it does the right thing (even if you select a mix of bold and not-bold, it will make it all bold or all not-bold, like a real editor should).
