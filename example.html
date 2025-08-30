@@ -12,8 +12,7 @@
     <button type="button" id="italic-btn"><i>I</i></button>
     <button type="button" id="underline-btn"><u>U</u></button>
     <button type="button" id="strikethrough-btn"><s>S</s></button>
-    <button type="button" id="highlight-btn-1">Highlight Red</button>
-    <button type="button" id="highlight-btn-2">Highlight Blue</button>
+    <input type="color" id="highlight-color" value="#ffff00">
     <!-- Add more buttons here -->
   </div>
   <div id="editor" class="richtext-editor" contenteditable="true"></div>
@@ -25,8 +24,17 @@
     document.getElementById('italic-btn').onclick = () => editor.italic();
     document.getElementById('underline-btn').onclick = () => editor.underline();
     document.getElementById('strikethrough-btn').onclick = () => editor.strikethrough();
-    document.getElementById('highlight-btn-1').onclick = () => editor.highlight('#ff0000');
-    document.getElementById('highlight-btn-2').onclick = () => editor.highlight('#0000ff');
+    document.getElementById('highlight-color').oninput = (e) => editor.highlight(e.target.value);
+
+    // Set some test content using setContent
+    editor.setContent(
+      '<span class="bold">Bold </span>' +
+      '<span class="italic">Italic </span>' +
+      '<span class="underline">Underline </span>' +
+      '<span class="strikethrough">Strike </span>' +
+      '<span class="highlight" style="--highlight: #ff0;">Yellow Highlight </span>' +
+      '<span class="highlight" style="--highlight: #0af;">Blue Highlight</span>'
+    );
   </script>
 </body>
 </html>

@@ -36,13 +36,79 @@ class RichTextEditor {
     this.toggleFormat('underline');
   }
 
+
   strikethrough() {
     this.toggleFormat('strikethrough');
   }
 
-
   highlight(value = '#ffff00') {
     this.toggleFormat('highlight', value);
+  }
+
+  /**
+   * Set the editor content from HTML (expects spans with class/style as output by this editor)
+   * Falls back to plain text if parsing fails.
+   * @param {string} html
+   */
+  setContent(html) {
+    let model = [];
+    try {
+      // Parse HTML string into DOM
+      const container = document.createElement('div');
+      container.innerHTML = html;
+      // Helper to extract formats from a span
+      function parseSpan(span) {
+        let obj = { text: span.textContent || '' };
+        // Classes
+        if (span.classList && span.classList.length) {
+          for (const cls of span.classList) {
+            obj[cls] = true;
+          }
+        }
+        // Style (CSS variables)
+        if (span.hasAttribute && span.hasAttribute('style')) {
+          const style = span.getAttribute('style');
+          // Match --key: value; pairs
+          const re = /--([\w-]+)\s*:\s*([^;]+);?/g;
+          let m;
+          while ((m = re.exec(style))) {
+            const key = m[1];
+            const value = m[2].trim();
+            obj[key] = true;
+            obj[key + 'Value'] = value;
+          }
+        }
+        return obj;
+      }
+      // Walk children, flattening nested spans
+      function walk(node) {
+        if (node.nodeType === 3) { // text
+          if (node.textContent) model.push({ text: node.textContent });
+        } else if (node.nodeType === 1 && node.tagName === 'SPAN') {
+          // Only handle <span>
+          let obj = parseSpan(node);
+          // If span has only text nodes, use as one span
+          if ([...node.childNodes].every(n => n.nodeType === 3)) {
+            model.push(obj);
+          } else {
+            // If nested, walk children
+            for (const child of node.childNodes) walk(child);
+          }
+        } else if (node.nodeType === 1) {
+          // For other elements, walk children
+          for (const child of node.childNodes) walk(child);
+        }
+      }
+      for (const child of container.childNodes) walk(child);
+      // Remove empty spans
+      model = model.filter(s => s.text && s.text.length > 0);
+      if (model.length === 0) model = [ { text: '' } ];
+    } catch (e) {
+      // Fallback: treat as plain text
+      model = [ { text: (html || '').replace(/<[^>]+>/g, '') } ];
+    }
+    this.model = model;
+    this._render();
   }
 
   /**

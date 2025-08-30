@@ -9,6 +9,7 @@ What is this?
 -------------
 It's a rich text editor. You can bold, italic, and type stuff. It works off a JSON model, not the DOM, so it's less likely to break in weird ways. You can select text, hit bold or italic, and it does the right thing (even if you select a mix of bold and not-bold, it will make it all bold or all not-bold, like a real editor should). The main idea is that you can create your own options for it.
 
+
 How do I use it?
 ----------------
 1. Open `index.html` in your browser. That's it. No build step, no npm, no nothing. Just double click or drag it into Chrome/Safari/whatever.
@@ -16,6 +17,24 @@ How do I use it?
 2. You'll see a toolbar with Bold and Italic buttons, and a big white box. Type in the box. Select some text, click Bold or Italic. Magic.
 
 3. The editor keeps its state in a JSON model, so you could (if you wanted) add export/import features, or inspect the model for fun. (Not included by default, but easy to add.)
+
+4. You can also set the content from HTML using the new `setContent(html)` method. This lets you load HTML (with spans, classes, and style attributes as output by the editor) directly into the editor.
+
+Example: Setting content from HTML
+---------------------------------
+
+```js
+editor.setContent(
+	'<span class="bold">Bold </span>' +
+	'<span class="italic">Italic </span>' +
+	'<span class="underline">Underline </span>' +
+	'<span class="strikethrough">Strike </span>' +
+	'<span class="highlight" style="--highlight: #ff0;">Yellow Highlight </span>' +
+	'<span class="highlight" style="--highlight: #0af;">Blue Highlight</span>'
+);
+```
+
+This will load the given HTML into the editor, converting it to the internal JSON model. If the HTML is invalid or not in the expected format, it will just load the plain text.
 
 How does it work?
 -----------------
