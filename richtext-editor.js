@@ -108,7 +108,7 @@ class RichTextEditor {
       this._render();
     });
     // Prevent default formatting (e.g. browser bold)
-    this.el.addEventListener('beforeinput', (e) => {
+    this.el.addEventListener('beforeinput', (e) => { // you don't really need to change this even if you add more options
       if (["formatBold", "formatItalic", "formatUnderline", "insertParagraph", "insertLineBreak"].includes(e.inputType)) {
         e.preventDefault();
       }
