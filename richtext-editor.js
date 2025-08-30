@@ -1,4 +1,4 @@
-// RichTextEditor.js
+// richtext-editor.js
 // Rich text editor class (no execCommand)
 // By MJDawson
 
