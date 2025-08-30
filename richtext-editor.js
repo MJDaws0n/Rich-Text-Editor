@@ -1,8 +1,7 @@
 // richtext-editor.js
 // Rich text editor class (no execCommand)
 // By MJDawson
-
-
+// https://github.com/MJDaws0n/Rich-Text-Editor/tree/main
 
 class RichTextEditor {
   /**
