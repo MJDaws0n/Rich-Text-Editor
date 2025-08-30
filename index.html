@@ -4,52 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rich Text Editor Example</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f7f7f7;
-      margin: 0;
-      padding: 40px;
-    }
-    .editor-toolbar {
-      background: #fff;
-      border: 1px solid #ccc;
-      border-bottom: none;
-      padding: 8px;
-      display: flex;
-      gap: 8px;
-      border-radius: 6px 6px 0 0;
-    }
-    .editor-toolbar button {
-      background: #f0f0f0;
-      border: 1px solid #bbb;
-      border-radius: 4px;
-      padding: 6px 12px;
-      cursor: pointer;
-      font-size: 16px;
-      transition: background 0.2s;
-    }
-    .editor-toolbar button.active {
-      background: #d0eaff;
-      border-color: #3399ff;
-    }
-    .richtext-editor {
-      background: #fff;
-      border: 1px solid #ccc;
-      min-height: 180px;
-      padding: 12px;
-      border-radius: 0 0 6px 6px;
-      outline: none;
-      font-size: 16px;
-      line-height: 1.6;
-      margin-bottom: 20px;
-    }
-  </style>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="editor-toolbar">
     <button type="button" id="bold-btn"><b>B</b></button>
     <button type="button" id="italic-btn"><i>I</i></button>
+    <button type="button" id="underline-btn"><u>U</u></button>
     <!-- Add more buttons here -->
   </div>
   <div id="editor" class="richtext-editor" contenteditable="true"></div>
@@ -59,6 +20,7 @@
     const editor = new RichTextEditor(document.getElementById('editor'));
     document.getElementById('bold-btn').onclick = () => editor.bold();
     document.getElementById('italic-btn').onclick = () => editor.italic();
+    document.getElementById('underline-btn').onclick = () => editor.underline();
   </script>
 </body>
 </html>
