@@ -1,42 +1,81 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rich Text Editor Example</title>
-  <link rel="stylesheet" href="example.css">
-</head>
-<body>
-  <div class="editor-toolbar">
-    <button type="button" id="bold-btn"><b>B</b></button>
-    <button type="button" id="italic-btn"><i>I</i></button>
-    <button type="button" id="underline-btn"><u>U</u></button>
-    <button type="button" id="strikethrough-btn"><s>S</s></button>
-    <input type="color" id="highlight-color" value="#ffff00">
-    <!-- Add more buttons here -->
-  </div>
-  <div id="editor" class="richtext-editor" contenteditable="true"></div>
-  <script src="richtext-editor.js"></script>
-  <script>
-    // Example usage
-    const editor = new RichTextEditor(document.getElementById('editor'));
-    document.getElementById('bold-btn').onclick = () => editor.bold();
-    document.getElementById('italic-btn').onclick = () => editor.italic();
-    document.getElementById('underline-btn').onclick = () => editor.underline();
-    document.getElementById('strikethrough-btn').onclick = () => editor.strikethrough();
-    document.getElementById('highlight-color').oninput = (e) => editor.highlight(e.target.value);
 
-    editor.on('change', html => console.log('New content:', html));
-    
-    // Set some test content using setContent
-    editor.setContent(
-      '<span class="bold">Bold </span>' +
-      '<span class="italic">Italic </span>' +
-      '<span class="underline">Underline </span>' +
-      '<span class="strikethrough">Strike </span>' +
-      '<span class="highlight" style="--highlight: #ff0;">Yellow Highlight </span>' +
-      '<span class="highlight" style="--highlight: #0af;">Blue Highlight</span>'
-    );
-  </script>
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Rich Text Editor Example</title>
+	<link rel="stylesheet" href="example.css">
+</head>
+
+<body>
+	<div class="editor-toolbar">
+		<button type="button" id="bold-btn"><b>B</b></button>
+		<button type="button" id="italic-btn"><i>I</i></button>
+		<button type="button" id="underline-btn"><u>U</u></button>
+		<button type="button" id="strikethrough-btn"><s>S</s></button>
+		<input type="color" id="highlight-color" value="#ffff00">
+		<button type="button" id="highlight-btn">Remove Highlight</button>
+		<button type="button" id="remove-formatting-btn">Remove Formatting</button>
+		<!-- Add more buttons here -->
+	</div>
+	<div id="editor" class="richtext-editor" contenteditable="true"></div>
+	<script src="richtext-editor.js"></script>
+	<script>
+		// Example usage
+		const editor = new RichTextEditor(document.getElementById('editor'));
+		document.getElementById('bold-btn').onclick = () => editor.bold();
+		document.getElementById('italic-btn').onclick = () => editor.toggleFormat('italic');
+		document.getElementById('underline-btn').onclick = () => editor.toggleFormat('underline');
+		document.getElementById('strikethrough-btn').onclick = () => editor.toggleFormat('strikethrough');
+		document.getElementById('highlight-color').oninput = (e) => editor.highlight(e.target.value);
+		document.getElementById('highlight-btn').onclick = () => editor.removeFormat('highlight');
+		document.getElementById('remove-formatting-btn').onclick = (e) => {
+			if(editor.hasFormat('') !== null) { // Will return null if no text is selected
+				editor.removeFormattingOnSelected();
+			} else{
+				editor.removeAllFormatting();
+			}
+		};
+
+		editor.on('change', html => console.log('New content:', html));
+		editor.on('select', () => {
+			if (editor.hasFormat('bold')) {
+				document.getElementById('bold-btn').classList.add('active');
+			} else {
+				document.getElementById('bold-btn').classList.remove('active');
+			}
+			if (editor.hasFormat('italic')) {
+				document.getElementById('italic-btn').classList.add('active');
+			} else {
+				document.getElementById('italic-btn').classList.remove('active');
+			}
+			if (editor.hasFormat('underline')) {
+				document.getElementById('underline-btn').classList.add('active');
+			} else {
+				document.getElementById('underline-btn').classList.remove('active');
+			}
+			if (editor.hasFormat('strikethrough')) {
+				document.getElementById('strikethrough-btn').classList.add('active');
+			} else {
+				document.getElementById('strikethrough-btn').classList.remove('active');
+			}
+			if (editor.hasFormatContained('highlight')) {
+				document.getElementById('highlight-btn').classList.add('active');
+			} else {
+				document.getElementById('highlight-btn').classList.remove('active');
+			}
+		});
+
+		// Set some test content using setContent
+		editor.setContent(
+			'<span class="bold">Bold </span>' +
+			'<span class="italic">Italic </span>' +
+			'<span class="underline">Underline </span>' +
+			'<span class="strikethrough">Strike </span>' +
+			'<span class="highlight" style="--highlight: #ff0;">Yellow Highlight </span>' +
+			'<span class="highlight" style="--highlight: #0af;">Blue Highlight</span>'
+		);
+	</script>
 </body>
 </html>

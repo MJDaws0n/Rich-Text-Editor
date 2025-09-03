@@ -1,64 +1,25 @@
 Rich Text Editor
 ===============================================
 
-Preview it [here](https://mjdaws0n.github.io/Rich-Text-Editor/example.html)
-
-https://mjdaws0n.github.io/Rich-Text-Editor/example.html
+Preview it at [https://mjdaws0n.github.io/Rich-Text-Editor/example.html](https://mjdaws0n.github.io/Rich-Text-Editor/example.html).
 
 What is this?
 -------------
-It's a rich text editor. You can bold, italic, and type stuff. It works off a JSON model, not the DOM, so it's less likely to break in weird ways. You can select text, hit bold or italic, and it does the right thing (even if you select a mix of bold and not-bold, it will make it all bold or all not-bold, like a real editor should). The main idea is that you can create your own options for it.
-
-
+It's a rich text editor. You can make buttons that add/remove classes from selected text such as bold or italic. It works off a JSON model, not the DOM, so it's less likely to break in weird ways. You can select text, hit somin like bold or italic, and it does the right thing (even if you select a mix of bold and not-bold, it will make it all bold or all not-bold, like a real editor should). The main idea is that you can create your own options for it.
 
 How do I use it?
 ----------------
-1. Open `index.html` in your browser. That's it. No build step, no npm, no nothing. Just double click or drag it into Chrome/Safari/whatever.
+Take a look `index.html`. This shows a basic implementation of it. More will be said bellow on how to use it properly.
 
-2. You'll see a toolbar with Bold and Italic buttons, and a big white box. Type in the box. Select some text, click Bold or Italic. Magic.
+Hows it work?
+----------------
+- When you type, the rich text editor (rte) will convert your input into a span and then simplify, basically without fomatting just appears to enter you text into a blank span.
+- The editor keeps its state in a JSON model, this makes it easier to work with. I would't know how to make it otherwise tbh.
+- When a format is toggled the code takes the selected text and checks to see if it has the class of the toggled format. If it does, it removes it, if not it adds it. The same is for addFormat - just adds the format regardless of if it's already applied and removeFormat - i'm not gonna explain this again.
+- Lost more magic stuff that I stuggle to understand now looking over it, so it better never just stop working.
 
-3. The editor keeps its state in a JSON model, so you could (if you wanted) add export/import features, or inspect the model for fun. (Not included by default, but easy to add.)
 
-4. You can also set the content from HTML using the new `setContent(html)` method. This lets you load HTML (with spans, classes, and style attributes as output by the editor) directly into the editor.
-
-5. **Listen for changes:** You can now listen for changes to the editor's content using the `.on('change', callback)` method. The callback receives the current HTML as its argument. This is useful for autosave, live preview, or syncing content.
-
-Example:
-
-```js
-editor.on('change', html => {
-	console.log('Editor content changed:', html);
-});
-```
-
-To remove a listener, use `.off('change', callback)` with the same function reference.
-
-```js
-function handleChange(html) {
-	// ...
-}
-editor.on('change', handleChange);
-// Later, to remove:
-editor.off('change', handleChange);
-```
-
-Example: Setting content from HTML
----------------------------------
-
-```js
-editor.setContent(
-	'<span class="bold">Bold </span>' +
-	'<span class="italic">Italic </span>' +
-	'<span class="underline">Underline </span>' +
-	'<span class="strikethrough">Strike </span>' +
-	'<span class="highlight" style="--highlight: #ff0;">Yellow Highlight </span>' +
-	'<span class="highlight" style="--highlight: #0af;">Blue Highlight</span>'
-);
-```
-
-This will load the given HTML into the editor, converting it to the internal JSON model. If the HTML is invalid or not in the expected format, it will just load the plain text.
-
-How does it work?
+Details of how the data is stored
 -----------------
 - All the text and formatting is stored in a JS array like:
 
@@ -68,85 +29,156 @@ How does it work?
 		{ text: "world", italic: true }
 	]
 	```
-
 - When you type or format, it updates the model and re-renders the editor. No `execCommand`, no browser weirdness.
 
-Features
---------
-- Bold and Italic (more can be added easily)
-- Handles mixed selections (see above)
-- No dependencies, just HTML/CSS/JS
-- Modern, clean UI (see `styles.css`)
 
-Example custom usage
--------------------
+RichTextEditor Public API Functions
+-----------------------------------
 
-```html
-<div id="editor" class="richtext-editor" contenteditable="true"></div>
-<script src="richtext-editor.js"></script>
-<script>
-	const editor = new RichTextEditor(document.getElementById('editor'));
-	// To bold: editor.bold();
-	// To italic: editor.italic();
-	// Listen for changes:
-	editor.on('change', html => {
-		// Do something with the new HTML
-		console.log('Changed:', html);
-	});
-</script>
-```
-
-You can hook up your own buttons, or feel free to use the ones in the demo.
-
-
-Want to add your own formats?
-----------------------------
-It's super easy now. All formatting is handled by classes, so you can add any format you want (like `code`, `highlight`, `red`, etc) and style it in CSS.
-
-
-How to add a new format (with or without a value):
-
-1. Add a method to the class (with optional value):
+Below are all the main functions you can call on a `RichTextEditor` instance. You can use these to build your own toolbar or custom features. Each function assumes you have an editor instance like:
 
 ```js
-// With a value (e.g. color)
-highlight(color = '#ffff00') {
-	this.toggleFormat('highlight', color);
-}
-// Or without a value
-code() {
-	this.toggleFormat('code');
-}
+const editor = new RichTextEditor(document.getElementById('editor'));
 ```
 
-2. Add a button in your HTML and hook it up:
+### Formatting Functions
 
-```html
-<button onclick="editor.highlight('#ff0000')">Highlight Red</button>
-<button onclick="editor.highlight('#0000ff')">Highlight Blue</button>
-```
+- **bold()**
+	- Toggles bold formatting on the selected text. Essentially just an example function.
+	- Example:
+		```javascript
+		editor.bold();
+		```
+- **highlight(value = '#ffff00')**
+	- Adds highlight formatting with the given color to the selected text. Another example function
+	- Example:
+		```js
+		editor.highlight('#ff0');
+		```
 
-3. Add a CSS rule for the class, using the CSS variable if you want:
+- **toggleFormat(format, value?)**
+	- Toggles a format (e.g. 'italic', 'underline', 'strikethrough', etc) on the selected text. Optionally pass a value (e.g. color). This simply adds a class with that name to the object so set the respective css such as 
+		```css
+		.underline {
+			text-decoration: underline;
+		}
+		```
+		to make it work correctly. The second argument, can be accessed via var(--name);. So for the highlight example, you may have:
+		```css
+		.highlight {
+			background-color: var(--highlight);
+		}
+		```
+	- Example:
+		```js
+		editor.toggleFormat('italic');
+		editor.toggleFormat('underline');
+		editor.toggleFormat('highlight', '#ff0');
+		```
 
-```css
-.highlight {
-	background: var(--highlight, yellow); /* fallback to yellow if not set */
-}
-/* You can add more, e.g. custom font size: */
-.customfontsize {
-	font-size: var(--customfontsize, 24px);
-}
-```
+- **addFormat(format, value?)**
+	- Explicitly adds a format to the selected text, regardless of current state. Similarly, it just adds the class.
+	- Example:
+		```js
+		editor.addFormat('highlight', '#00ff00');
+		```
 
-That's it! When you call `editor.highlight('#ff0000')`, it will toggle the `highlight` class and set the CSS variable `--highlight: #ff0000;` on the selected text. You can add as many as you want, and style them however you like. If you don't pass a value, no CSS variable is set.
+- **removeFormat(format)**
+	- Removes a format from the selected text. Similarly, it just removes the class.
+	- Example:
+		```js
+		editor.removeFormat('highlight');
+		editor.removeFormat('bold');
+		```
 
+- **removeAllFormatting()**
+	- Removes all formatting from the entire editor content (not just selected). I don't really see why this would be used much. In the example it's used if no text is selected to clear format on everything.
+	- Example:
+		```js
+		editor.removeAllFormatting();
+		```
 
-How does it work?
------------------
-- Each format is just a key in the model (e.g. `{ text: 'foo', bold: true, highlight: true, highlightValue: '#ff0000' }`).
-- When rendering, all formats are turned into classes on a `<span>`, and any value is turned into a CSS variable (e.g. `style="--highlight: #ff0000;"`).
-- The `toggleFormat` method does all the logic for you—no need to change the rendering or model code.
+- **removeFormattingOnSelected()**
+	- Removes all formatting from the selected text only.
+	- Example:
+		```js
+		editor.removeFormattingOnSelected();
+		```
 
-That's it. Enjoy!
+### Content Functions
 
-Please credit any remixes or modifications, however you don't need to credit the project in production environment.
+- **setContent(html)**
+	- Sets the editor content from an HTML string (expects spans with class/style as output by this editor). Should all work correctly assuming it's valid html.
+	- Example:
+		```js
+		editor.setContent('<span class="bold">Bold</span> <span class="italic">Italic</span>');
+		```
+
+- **getHTML()**
+	- Gets the current HTML content of the editor (as produced by the editor's model).
+	- Example:
+		```js
+		const html = editor.getHTML();
+		```
+
+### Query Functions
+
+- **hasFormat(format)**
+	- Returns `true` if all selected text has the given format, `false` if none, or `null` if no selection.
+	- Example - set state of the button based on selected text (see [event functions](#event-functions)):
+		```js
+		editor.on('select', () => {
+			if (editor.hasFormat('bold')) {
+				document.getElementById('bold-btn').classList.add('active');
+			} else {
+				document.getElementById('bold-btn').classList.remove('active');
+			}
+		});
+		```
+
+- **hasFormatContained(format)**
+	- Returns `true` if any part of the selection has the format, `false` if none, or `null` if no selection. Used in more specific cases such as needing to specifically remove a format.
+	- Example:
+		```js
+		editor.on('select', () => {
+			if (editor.hasFormatContained('highlight')) {
+				document.getElementById('highlight-btn').classList.add('active');
+			} else {
+				document.getElementById('highlight-btn').classList.remove('active');
+			}
+		});
+		```
+
+- **listFormattingOnSelected()**
+	- Returns an array of formatting objects for each formatted region in the selection.
+	- Example:
+		```js
+		const formats = editor.listFormattingOnSelected();
+		```
+	- Example response:
+		```javascript
+		[{bold: true}, {italic: true}, {underline: true}, {strikethrough: true}, {highlight: true, highlightValue: "#ff0"}, {highlight: true, highlightValue: "#0af"}]
+		```
+
+### Event Functions
+
+- **on(event, callback)**
+	- Adds an event listener. Events: 'change' (content changed), 'select' (selection changed). More may be added later.
+	- Example:
+		```js
+		editor.on('change', html => console.log('Changed:', html));
+		editor.on('select', () => { /* ... */ });
+		```
+
+- **off(event, callback)**
+	- Removes an event listener. You aint ever gonna need this.
+	- Example:
+		```js
+		function onChange(html) { /* ... */ }
+		editor.on('change', onChange);
+		editor.off('change', onChange);
+		```
+
+---
+
+You can use these functions to build your own toolbar, keyboard shortcuts, or custom formatting options. See `example.html` for a basic implementation.

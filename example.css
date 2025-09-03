@@ -1,54 +1,69 @@
 body {
-  font-family: Arial, sans-serif;
-  background: #f7f7f7;
-  margin: 0;
-  padding: 40px;
+	font-family: Arial, sans-serif;
+	background: #f7f7f7;
+	margin: 0;
+	padding: 40px;
 }
+
 .editor-toolbar {
-  background: #fff;
-  border: 1px solid #ccc;
-  border-bottom: none;
-  padding: 8px;
-  display: flex;
-  gap: 8px;
-  border-radius: 6px 6px 0 0;
+	background: #fff;
+	border: 1px solid #ccc;
+	border-bottom: none;
+	padding: 8px;
+	display: flex;
+	gap: 8px;
+	border-radius: 6px 6px 0 0;
 }
+
 .editor-toolbar button {
-  background: #f0f0f0;
-  border: 1px solid #bbb;
-  border-radius: 4px;
-  padding: 6px 12px;
-  cursor: pointer;
-  font-size: 16px;
-  transition: background 0.2s;
+	background: #f0f0f0;
+	border: 1px solid #bbb;
+	border-radius: 4px;
+	padding: 6px 12px;
+	cursor: pointer;
+	font-size: 16px;
+	transition: background 0.2s;
 }
+
+#highlight-color {
+	width: 32px;
+	height: 33px;
+	margin: 0;
+}
+
 .editor-toolbar button.active {
-  background: #d0eaff;
-  border-color: #3399ff;
+	background: #d0eaff;
+	border-color: #3399ff;
 }
+
 .richtext-editor {
-  background: #fff;
-  border: 1px solid #ccc;
-  min-height: 180px;
-  padding: 12px;
-  border-radius: 0 0 6px 6px;
-  outline: none;
-  font-size: 16px;
-  line-height: 1.6;
-  margin-bottom: 20px;
+	background: #fff;
+	border: 1px solid #ccc;
+	min-height: 180px;
+	padding: 12px;
+	border-radius: 0 0 6px 6px;
+	outline: none;
+	font-size: 16px;
+	line-height: 1.6;
+	margin-bottom: 20px;
 }
-.bold{
-    font-weight: bold;
+
+.bold {
+	font-weight: bold;
 }
-.italic{
-    font-style: italic;
+
+.italic {
+	font-style: italic;
 }
-.underline{
-    text-decoration: underline;
+
+.underline {
+	text-decoration: underline;
 }
-.strikethrough{
-    text-decoration: line-through;
+
+.strikethrough {
+	text-decoration: line-through;
 }
-.highlight{
-    background-color: var(--highlight);
+
+.highlight {
+	background-color: var(--highlight);
 }

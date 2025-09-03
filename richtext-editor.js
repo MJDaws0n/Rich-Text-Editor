@@ -5,7 +5,7 @@
 
 class RichTextEditor {
 	/**
-	 * Event listeners storage
+	 * Event listeners stuff
 	 */
 	_listeners = {};
 	/**
@@ -19,7 +19,7 @@ class RichTextEditor {
 			throw new Error('Element must have contenteditable="true"');
 		}
 		this.el = editableElement;
-		// The model: [{ text: string, bold?: true, italic?: true, ... }]
+		// The models like: [{ text: string, bold?: true, italic?: true, ... }]
 		this.model = [{ text: '' }];
 		this._bindEvents();
 		this._render();
@@ -58,26 +58,18 @@ class RichTextEditor {
 	}
 
 	// --- Public API ---
+	// These are example functions made for the example
+
+	// You can add you own here, but most likely you will
+	// want to just trigger instance.toggleFormat('classname'); in
+	// your own code
 
 	bold() {
 		this.toggleFormat('bold');
 	}
 
-	italic() {
-		this.toggleFormat('italic');
-	}
-
-	underline() {
-		this.toggleFormat('underline');
-	}
-
-
-	strikethrough() {
-		this.toggleFormat('strikethrough');
-	}
-
 	highlight(value = '#ffff00') {
-		this.toggleFormat('highlight', value);
+		this.addFormat('highlight', value);
 	}
 
 	/**
@@ -91,7 +83,7 @@ class RichTextEditor {
 			// Parse HTML string into DOM
 			const container = document.createElement('div');
 			container.innerHTML = html;
-			// Helper to extract formats from a span
+			// Extract formats from a span
 			function parseSpan(span) {
 				let obj = { text: span.textContent || '' };
 				// Classes
@@ -100,7 +92,7 @@ class RichTextEditor {
 						obj[cls] = true;
 					}
 				}
-				// Style (CSS variables)
+				// CSS variables
 				if (span.hasAttribute && span.hasAttribute('style')) {
 					const style = span.getAttribute('style');
 					// Match --key: value; pairs
@@ -115,7 +107,6 @@ class RichTextEditor {
 				}
 				return obj;
 			}
-			// Walk children, flattening nested spans
 			function walk(node) {
 				if (node.nodeType === 3) { // text
 					if (node.textContent) model.push({ text: node.textContent });
@@ -126,11 +117,9 @@ class RichTextEditor {
 					if ([...node.childNodes].every(n => n.nodeType === 3)) {
 						model.push(obj);
 					} else {
-						// If nested, walk children
 						for (const child of node.childNodes) walk(child);
 					}
 				} else if (node.nodeType === 1) {
-					// For other elements, walk children
 					for (const child of node.childNodes) walk(child);
 				}
 			}
@@ -158,14 +147,14 @@ class RichTextEditor {
 		if (!sel) return;
 		const { start, end } = sel;
 		if (start === end) return; // No selection
-		// First pass: determine if all selected text has the format
+		// Determine if all selected text has the format
 		let idx = 0;
 		let allHaveFormat = true;
 		for (const span of this.model) {
 			const spanStart = idx;
 			const spanEnd = idx + span.text.length;
 			if (spanEnd <= start || spanStart >= end) {
-				// Not affected
+				// Do nowt
 			} else {
 				const selStart = Math.max(start, spanStart);
 				const selEnd = Math.min(end, spanEnd);
@@ -177,7 +166,7 @@ class RichTextEditor {
 			idx += span.text.length;
 		}
 		const shouldAdd = !allHaveFormat;
-		// Second pass: build new model with uniform format for selection
+		// Build new model with uniform format for selection
 		idx = 0;
 		let newModel = [];
 		for (const span of this.model) {
@@ -201,6 +190,7 @@ class RichTextEditor {
 						newSpan[valueKey] = value;
 					}
 				} else {
+					// Yall had no clue there was such a thing as delete in javascript
 					delete newSpan[format];
 					delete newSpan[valueKey];
 				}
@@ -215,6 +205,233 @@ class RichTextEditor {
 		this.model = this._mergeSpans(newModel);
 		this._render();
 		this._emit('change', this.getHTML());
+	}
+
+	/**
+	 * Explicitly add a format to the current selection
+	 * @param {string} format
+	 * @param {string|undefined} value
+	 */
+	addFormat(format, value) {
+		const valueKey = format + 'Value';
+		const sel = this._getSelectionOffsets();
+		if (!sel) return;
+		const { start, end } = sel;
+		if (start === end) return; // No selection
+		let idx = 0;
+		let newModel = [];
+		for (const span of this.model) {
+			const spanStart = idx;
+			const spanEnd = idx + span.text.length;
+			if (spanEnd <= start || spanStart >= end) {
+				// Not affected
+				newModel.push({ ...span });
+			} else {
+				// Split as needed
+				if (spanStart < start) {
+					newModel.push({ ...span, text: span.text.slice(0, start - spanStart) });
+				}
+				const selStart = Math.max(start, spanStart);
+				const selEnd = Math.min(end, spanEnd);
+				const selectedText = span.text.slice(selStart - spanStart, selEnd - spanStart);
+				let newSpan = { ...span, text: selectedText };
+				newSpan[format] = true;
+				if (typeof value !== 'undefined') {
+					newSpan[valueKey] = value;
+				}
+				newModel.push(newSpan);
+				if (spanEnd > end) {
+					newModel.push({ ...span, text: span.text.slice(end - spanStart) });
+				}
+			}
+			idx += span.text.length;
+		}
+		this.model = this._mergeSpans(newModel);
+		this._render();
+		this._emit('change', this.getHTML());
+	}
+
+	/**
+	 * Explicitly remove a format from the current selection
+	 * @param {string} format
+	 */
+	removeFormat(format) {
+		const valueKey = format + 'Value';
+		const sel = this._getSelectionOffsets();
+		if (!sel) return;
+		const { start, end } = sel;
+		if (start === end) return; // No selection
+		let idx = 0;
+		let newModel = [];
+		for (const span of this.model) {
+			const spanStart = idx;
+			const spanEnd = idx + span.text.length;
+			if (spanEnd <= start || spanStart >= end) {
+				// Not affected
+				newModel.push({ ...span });
+			} else {
+				// Split as needed
+				if (spanStart < start) {
+					newModel.push({ ...span, text: span.text.slice(0, start - spanStart) });
+				}
+				const selStart = Math.max(start, spanStart);
+				const selEnd = Math.min(end, spanEnd);
+				const selectedText = span.text.slice(selStart - spanStart, selEnd - spanStart);
+				let newSpan = { ...span, text: selectedText };
+				delete newSpan[format];
+				delete newSpan[valueKey];
+				newModel.push(newSpan);
+				if (spanEnd > end) {
+					newModel.push({ ...span, text: span.text.slice(end - spanStart) });
+				}
+			}
+			idx += span.text.length;
+		}
+		this.model = this._mergeSpans(newModel);
+		this._render();
+		this._emit('change', this.getHTML());
+	}
+
+	/**
+	 * Check if the current selection has a given format applied
+	 * @param {string} format
+	 * @returns {boolean|null} true if all selected text has the format, false if none, null if no selection
+	 */
+	hasFormat(format) {
+		const sel = this._getSelectionOffsets();
+		if (!sel) return null;
+		const { start, end } = sel;
+		if (start === end) return null; // No selection
+		let idx = 0;
+		let allHave = true;
+		let noneHave = true;
+		for (const span of this.model) {
+			const spanStart = idx;
+			const spanEnd = idx + span.text.length;
+			if (spanEnd <= start || spanStart >= end) {
+				// Not affected
+			} else {
+				const selStart = Math.max(start, spanStart);
+				const selEnd = Math.min(end, spanEnd);
+				if (selEnd > selStart) {
+					if (!span[format]) {
+						allHave = false;
+					} else {
+						noneHave = false;
+					}
+				}
+			}
+			idx += span.text.length;
+		}
+		// If all selected have the format, return true; if none, false; if mixed, return either (here: true if all, else false)
+		return allHave;
+	}
+
+	/**
+	 * Check if the current selection contains any part with the given format
+	 * @param {string} format
+	 * @returns {boolean|null} true if any selected text has the format, false if none, null if no selection
+	 */
+	hasFormatContained(format) {
+		const sel = this._getSelectionOffsets();
+		if (!sel) return null;
+		const { start, end } = sel;
+		if (start === end) return null; // No selection
+		let idx = 0;
+		for (const span of this.model) {
+			const spanStart = idx;
+			const spanEnd = idx + span.text.length;
+			if (spanEnd <= start || spanStart >= end) {
+				// Not affected
+			} else {
+				const selStart = Math.max(start, spanStart);
+				const selEnd = Math.min(end, spanEnd);
+				if (selEnd > selStart && span[format]) {
+					return true;
+				}
+			}
+			idx += span.text.length;
+		}
+		return false;
+	}
+
+	/**
+	 * Remove all formatting from the entire editor content
+	 */
+	removeAllFormatting() {
+		this.model = this.model.map(span => ({ text: span.text }));
+		this._render();
+		this._emit('change', this.getHTML());
+	}
+
+	/**
+	 * Remove all formatting from the selected text only
+	 */
+	removeFormattingOnSelected() {
+		const sel = this._getSelectionOffsets();
+		if (!sel) return;
+		const { start, end } = sel;
+		if (start === end) return; // No selection
+		let idx = 0;
+		let newModel = [];
+		for (const span of this.model) {
+			const spanStart = idx;
+			const spanEnd = idx + span.text.length;
+			if (spanEnd <= start || spanStart >= end) {
+				// Not affected
+				newModel.push({ ...span });
+			} else {
+				// Split as needed
+				if (spanStart < start) {
+					newModel.push({ ...span, text: span.text.slice(0, start - spanStart) });
+				}
+				const selStart = Math.max(start, spanStart);
+				const selEnd = Math.min(end, spanEnd);
+				const selectedText = span.text.slice(selStart - spanStart, selEnd - spanStart);
+				newModel.push({ text: selectedText });
+				if (spanEnd > end) {
+					newModel.push({ ...span, text: span.text.slice(end - spanStart) });
+				}
+			}
+			idx += span.text.length;
+		}
+		this.model = this._mergeSpans(newModel);
+		this._render();
+		this._emit('change', this.getHTML());
+	}
+
+	/**
+	 * List all formatting on the selected text
+	 * @returns {Array<Object>} Array of formatting objects for each formatted region in selection
+	 */
+	listFormattingOnSelected() {
+		const sel = this._getSelectionOffsets();
+		if (!sel) return [];
+		const { start, end } = sel;
+		if (start === end) return [];
+		let idx = 0;
+		let result = [];
+		for (const span of this.model) {
+			const spanStart = idx;
+			const spanEnd = idx + span.text.length;
+			if (spanEnd <= start || spanStart >= end) {
+				// Not affected
+			} else {
+				const selStart = Math.max(start, spanStart);
+				const selEnd = Math.min(end, spanEnd);
+				if (selEnd > selStart) {
+					let fmt = {};
+					for (const key of Object.keys(span)) {
+						if (key !== 'text') {
+							fmt[key] = span[key];
+						}
+					}
+					result.push(fmt);
+				}
+			}
+			idx += span.text.length;
+		}
+		return result;
 	}
 	/**
 	 * Get the current HTML content of the editor
@@ -249,6 +466,8 @@ class RichTextEditor {
 		// Handle input events
 		this.el.addEventListener('input', (e) => {
 			this._updateModelFromDOM();
+			// Merge adjacent spans after input
+			this.model = this._mergeSpans(this.model);
 			this._render();
 			this._emit('change', this.getHTML());
 		});
@@ -258,6 +477,17 @@ class RichTextEditor {
 				e.preventDefault();
 			}
 		});
+
+		// Listen for selection changes and emit 'select' if selection is within the editor
+		this._selectionHandler = () => {
+			const sel = window.getSelection();
+			if (!sel || sel.rangeCount === 0) return;
+			const range = sel.getRangeAt(0);
+			if (this.el.contains(range.startContainer) || this.el === range.startContainer) {
+				this._emit('select');
+			}
+		};
+		document.addEventListener('selectionchange', this._selectionHandler);
 	}
 
 	/**
@@ -274,7 +504,6 @@ class RichTextEditor {
 			for (const key of Object.keys(span)) {
 				if (key === 'text') continue;
 				if (key.endsWith('Value')) {
-					// e.g. highlightValue -> --highlight: #ff0;
 					const format = key.slice(0, -5);
 					if (span[format]) {
 						styleList.push(`--${format}: ${span[key]}`);
