@@ -11,7 +11,7 @@ How do I use it?
 ----------------
 Take a look `index.html`. This shows a basic implementation of it. More will be said bellow on how to use it properly.
 
-Hows it work?
+How's it work?
 ----------------
 - When you type, the rich text editor (rte) will convert your input into a span and then simplify, basically without fomatting just appears to enter you text into a blank span.
 - The editor keeps its state in a JSON model, this makes it easier to work with. I would't know how to make it otherwise tbh.
