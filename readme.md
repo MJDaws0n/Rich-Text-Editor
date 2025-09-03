@@ -10,6 +10,7 @@ What is this?
 It's a rich text editor. You can bold, italic, and type stuff. It works off a JSON model, not the DOM, so it's less likely to break in weird ways. You can select text, hit bold or italic, and it does the right thing (even if you select a mix of bold and not-bold, it will make it all bold or all not-bold, like a real editor should). The main idea is that you can create your own options for it.
 
 
+
 How do I use it?
 ----------------
 1. Open `index.html` in your browser. That's it. No build step, no npm, no nothing. Just double click or drag it into Chrome/Safari/whatever.
@@ -19,6 +20,27 @@ How do I use it?
 3. The editor keeps its state in a JSON model, so you could (if you wanted) add export/import features, or inspect the model for fun. (Not included by default, but easy to add.)
 
 4. You can also set the content from HTML using the new `setContent(html)` method. This lets you load HTML (with spans, classes, and style attributes as output by the editor) directly into the editor.
+
+5. **Listen for changes:** You can now listen for changes to the editor's content using the `.on('change', callback)` method. The callback receives the current HTML as its argument. This is useful for autosave, live preview, or syncing content.
+
+Example:
+
+```js
+editor.on('change', html => {
+	console.log('Editor content changed:', html);
+});
+```
+
+To remove a listener, use `.off('change', callback)` with the same function reference.
+
+```js
+function handleChange(html) {
+	// ...
+}
+editor.on('change', handleChange);
+// Later, to remove:
+editor.off('change', handleChange);
+```
 
 Example: Setting content from HTML
 ---------------------------------
@@ -57,7 +79,7 @@ Features
 - Modern, clean UI (see `styles.css`)
 
 Example custom usage
--------------
+-------------------
 
 ```html
 <div id="editor" class="richtext-editor" contenteditable="true"></div>
@@ -66,6 +88,11 @@ Example custom usage
 	const editor = new RichTextEditor(document.getElementById('editor'));
 	// To bold: editor.bold();
 	// To italic: editor.italic();
+	// Listen for changes:
+	editor.on('change', html => {
+		// Do something with the new HTML
+		console.log('Changed:', html);
+	});
 </script>
 ```
 

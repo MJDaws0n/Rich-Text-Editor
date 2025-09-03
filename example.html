@@ -26,6 +26,8 @@
     document.getElementById('strikethrough-btn').onclick = () => editor.strikethrough();
     document.getElementById('highlight-color').oninput = (e) => editor.highlight(e.target.value);
 
+    editor.on('change', html => console.log('New content:', html));
+    
     // Set some test content using setContent
     editor.setContent(
       '<span class="bold">Bold </span>' +
