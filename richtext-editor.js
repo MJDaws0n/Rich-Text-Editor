@@ -21,6 +21,8 @@ class RichTextEditor {
 		this.el = editableElement;
 		// The models like: [{ text: string, bold?: true, italic?: true, ... }]
 		this.model = [{ text: '' }];
+		// The model is always an array of contiguous runs of text with formatting:
+		// [{ text: "Bold ", bold: true }, { text: "Italic ", italic: true }, ...]
 		this._bindEvents();
 		this._render();
 		this._emit('change', this.getHTML());
@@ -73,6 +75,114 @@ class RichTextEditor {
 	}
 
 	/**
+	 * Add a format to all spans in the selected lines
+	 * @param {string} format
+	 * @param {string|undefined} value
+	 */
+	addFormatToLine(format, value) {
+		const valueKey = format + 'Value';
+		const lines = this._getSelectedLines();
+		if (!lines || lines.length === 0) return;
+		let newModel = [];
+		for (let i = 0; i < this.model.length; ++i) {
+			const span = this.model[i];
+			if (lines.includes(this._getLineIndexOfSpan(i))) {
+				let newSpan = { ...span };
+				newSpan[format] = true;
+				if (typeof value !== 'undefined') {
+					newSpan[valueKey] = value;
+				}
+				newModel.push(newSpan);
+			} else {
+				newModel.push({ ...span });
+			}
+		}
+		this.model = this._mergeSpans(newModel);
+		this._render();
+		this._emit('change', this.getHTML());
+	}
+
+	/**
+	 * Remove a format from all spans in the selected lines
+	 * @param {string} format
+	 */
+	removeFormatFromLine(format) {
+		const valueKey = format + 'Value';
+		const lines = this._getSelectedLines();
+		if (!lines || lines.length === 0) return;
+		let newModel = [];
+		for (let i = 0; i < this.model.length; ++i) {
+			const span = this.model[i];
+			if (lines.includes(this._getLineIndexOfSpan(i))) {
+				let newSpan = { ...span };
+				delete newSpan[format];
+				delete newSpan[valueKey];
+				newModel.push(newSpan);
+			} else {
+				newModel.push({ ...span });
+			}
+		}
+		this.model = this._mergeSpans(newModel);
+		this._render();
+		this._emit('change', this.getHTML());
+	}
+
+	/**
+	 * Toggle a format on all spans in the selected lines
+	 * @param {string} format
+	 * @param {string|undefined} value
+	 */
+	toggleFormatOnLine(format, value) {
+		const valueKey = format + 'Value';
+		const lines = this._getSelectedLines();
+		if (!lines || lines.length === 0) return;
+		const allHaveFormat = this.lineHasFormat(format);
+		let newModel = [];
+		for (let i = 0; i < this.model.length; ++i) {
+			const span = this.model[i];
+			if (lines.includes(this._getLineIndexOfSpan(i))) {
+				let newSpan = { ...span };
+				if (!allHaveFormat) {
+					newSpan[format] = true;
+					if (typeof value !== 'undefined') {
+						newSpan[valueKey] = value;
+					}
+				} else {
+					delete newSpan[format];
+					delete newSpan[valueKey];
+				}
+				newModel.push(newSpan);
+			} else {
+				newModel.push({ ...span });
+			}
+		}
+		this.model = this._mergeSpans(newModel);
+		this._render();
+		this._emit('change', this.getHTML());
+	}
+
+	/**
+	 * Check if all spans in the selected lines have the format
+	 * @param {string} format
+	 * @returns {boolean|null}
+	 */
+	lineHasFormat(format) {
+		const lines = this._getSelectedLines();
+		if (!lines || lines.length === 0) return null;
+		let allHave = true;
+		for (let i = 0; i < this.model.length; ++i) {
+			const span = this.model[i];
+			if (lines.includes(this._getLineIndexOfSpan(i))) {
+				if (!span[format]) {
+					allHave = false;
+					break;
+				}
+			}
+		}
+		return allHave;
+	}
+
+	/**
 	 * Set the editor content from HTML (expects spans with class/style as output by this editor)
 	 * Falls back to plain text if parsing fails.
 	 * @param {string} html
@@ -80,22 +190,18 @@ class RichTextEditor {
 	setContent(html) {
 		let model = [];
 		try {
-			// Parse HTML string into DOM
 			const container = document.createElement('div');
 			container.innerHTML = html;
-			// Extract formats from a span
+
 			function parseSpan(span) {
 				let obj = { text: span.textContent || '' };
-				// Classes
 				if (span.classList && span.classList.length) {
 					for (const cls of span.classList) {
 						obj[cls] = true;
 					}
 				}
-				// CSS variables
 				if (span.hasAttribute && span.hasAttribute('style')) {
 					const style = span.getAttribute('style');
-					// Match --key: value; pairs
 					const re = /--([\w-]+)\s*:\s*([^;]+);?/g;
 					let m;
 					while ((m = re.exec(style))) {
@@ -107,15 +213,46 @@ class RichTextEditor {
 				}
 				return obj;
 			}
+
 			function walk(node) {
-				if (node.nodeType === 3) { // text
-					if (node.textContent) model.push({ text: node.textContent });
+				if (node.nodeType === 3) { // text node
+					const text = node.textContent || '';
+					if (text.length > 0) {
+						let lines = text.split(/(\n)/);
+						for (let i = 0; i < lines.length; ++i) {
+							if (lines[i] === '\n') {
+								model.push({ text: '\n' });
+							} else if (lines[i]) {
+								model.push({ text: lines[i] });
+							}
+						}
+					}
 				} else if (node.nodeType === 1 && node.tagName === 'SPAN') {
-					// Only handle <span>
 					let obj = parseSpan(node);
-					// If span has only text nodes, use as one span
 					if ([...node.childNodes].every(n => n.nodeType === 3)) {
-						model.push(obj);
+						let text = obj.text;
+						if (text.includes('\n')) {
+							let lines = text.split(/(\n)/);
+							for (let i = 0; i < lines.length; ++i) {
+								if (lines[i] === '\n') {
+									model.push({ text: '\n' });
+								} else if (lines[i]) {
+									let newSpan = {};
+									for (const key in obj) {
+										if (key !== 'text') newSpan[key] = obj[key];
+									}
+									newSpan.text = lines[i];
+									model.push(newSpan);
+								}
+							}
+						} else {
+							let newSpan = {};
+							for (const key in obj) {
+								if (key !== 'text') newSpan[key] = obj[key];
+							}
+							newSpan.text = text;
+							model.push(newSpan);
+						}
 					} else {
 						for (const child of node.childNodes) walk(child);
 					}
@@ -123,15 +260,25 @@ class RichTextEditor {
 					for (const child of node.childNodes) walk(child);
 				}
 			}
+
 			for (const child of container.childNodes) walk(child);
-			// Remove empty spans
-			model = model.filter(s => s.text && s.text.length > 0);
+
+			model = model.filter(s => s.text && s.text.length > 0 || s.text === '\n');
 			if (model.length === 0) model = [{ text: '' }];
 		} catch (e) {
-			// Fallback: treat as plain text
-			model = [{ text: (html || '').replace(/<[^>]+>/g, '') }];
+			let text = (html || '').replace(/<[^>]+>/g, '');
+			let lines = text.split(/(\n)/);
+			for (let i = 0; i < lines.length; ++i) {
+				if (lines[i] === '\n') {
+					model.push({ text: '\n' });
+				} else if (lines[i]) {
+					model.push({ text: lines[i] });
+				}
+			}
+			if (model.length === 0) model = [{ text: '' }];
 		}
 		this.model = model;
+
 		this._render();
 		this._emit('change', this.getHTML());
 	}
@@ -462,63 +609,214 @@ class RichTextEditor {
 
 	// --- Private helpers ---
 
-	_bindEvents() {
-		// Handle input events
-		this.el.addEventListener('input', (e) => {
-			this._updateModelFromDOM();
-			// Merge adjacent spans after input
-			this.model = this._mergeSpans(this.model);
-			this._render();
-			this._emit('change', this.getHTML());
-		});
-		// Prevent default formatting (e.g. browser bold)
-		this.el.addEventListener('beforeinput', (e) => { // you don't really need to change this even if you add more options
-			if (["formatBold", "formatItalic", "formatUnderline", "insertParagraph", "insertLineBreak"].includes(e.inputType)) {
-				e.preventDefault();
-			}
-		});
+// --- Private helpers ---
 
-		// Listen for selection changes and emit 'select' if selection is within the editor
-		this._selectionHandler = () => {
-			const sel = window.getSelection();
-			if (!sel || sel.rangeCount === 0) return;
-			const range = sel.getRangeAt(0);
-			if (this.el.contains(range.startContainer) || this.el === range.startContainer) {
-				this._emit('select');
-			}
-		};
-		document.addEventListener('selectionchange', this._selectionHandler);
+// Bind events for input and selection
+_bindEvents() {
+	this.el.addEventListener('input', (e) => {
+		this._updateModelFromDOM();
+		this.model = this._mergeSpans(this.model);
+		this._render();
+		this._emit('change', this.getHTML());
+	});
+	this.el.addEventListener('beforeinput', (e) => {
+		if (["formatBold", "formatItalic", "formatUnderline", "insertParagraph", "insertLineBreak"].includes(e.inputType)) {
+			e.preventDefault();
+		}
+	});
+	this._selectionHandler = () => {
+		const sel = window.getSelection();
+		if (!sel || sel.rangeCount === 0) return;
+		const range = sel.getRangeAt(0);
+		if (this.el.contains(range.startContainer) || this.el === range.startContainer) {
+			this._emit('select');
+		}
+	};
+	document.addEventListener('selectionchange', this._selectionHandler);
+}
+
+// Split a span at a given offset, returns [before, after]
+_splitSpan(span, offset) {
+	if (offset <= 0) return [null, { ...span }];
+	if (offset >= span.text.length) return [{ ...span }, null];
+	let before = { ...span, text: span.text.slice(0, offset) };
+	let after = { ...span, text: span.text.slice(offset) };
+	return [before, after];
+}
+
+// Split model at a given offset, returns [before, after]
+_splitModelAtOffset(model, offset) {
+	let idx = 0;
+	let before = [], after = [];
+	for (let i = 0; i < model.length; ++i) {
+		let span = model[i];
+		if (idx + span.text.length < offset) {
+			before.push({ ...span });
+			idx += span.text.length;
+		} else if (idx <= offset && offset < idx + span.text.length) {
+			let [b, a] = this._splitSpan(span, offset - idx);
+			if (b) before.push(b);
+			if (a) after.push(a);
+			idx += span.text.length;
+		} else {
+			after.push({ ...span });
+			idx += span.text.length;
+		}
 	}
+	return [before, after];
+}
+
+// Merge adjacent spans with identical formatting
+_mergeSpans(spans) {
+	if (!spans.length) return [{ text: '' }];
+	let merged = [{ ...spans[0] }];
+	for (let i = 1; i < spans.length; ++i) {
+		const prev = merged[merged.length - 1];
+		const curr = spans[i];
+		const prevKeys = Object.keys(prev).filter(k => k !== 'text');
+		const currKeys = Object.keys(curr).filter(k => k !== 'text');
+		const sameKeys = prevKeys.length === currKeys.length && prevKeys.every(k => curr[k] === prev[k]);
+		if (prev.text && curr.text && sameKeys) {
+			prev.text += curr.text;
+		} else {
+			merged.push({ ...curr });
+		}
+	}
+	return merged.filter(s => s.text);
+}
+
+// Map DOM selection to model offsets
+_getSelectionOffsets() {
+	const sel = window.getSelection();
+	if (!sel || sel.rangeCount === 0) return null;
+	const range = sel.getRangeAt(0);
+	if (!this.el.contains(range.startContainer) || !this.el.contains(range.endContainer)) return null;
+	let start = this._getOffsetFromNode(range.startContainer, range.startOffset);
+	let end = this._getOffsetFromNode(range.endContainer, range.endOffset);
+	if (start > end) [start, end] = [end, start];
+	return { start, end };
+}
+
+// Update model from DOM input (robust diffing)
+_updateModelFromDOM() {
+	const text = this.el.innerText.replace(/\r?\n$/, '');
+	let oldModel = this.model;
+	let newModel = [];
+	let idx = 0, oldIdx = 0, oldSpanIdx = 0;
+	while (idx < text.length) {
+		if (oldSpanIdx < oldModel.length) {
+			let span = oldModel[oldSpanIdx];
+			let matchLen = 0;
+			for (let k = 0; k < span.text.length && idx + k < text.length; ++k) {
+				if (text[idx + k] === span.text[k]) {
+					matchLen++;
+				} else {
+					break;
+				}
+			}
+			if (matchLen > 0) {
+				newModel.push({ ...span, text: text.substr(idx, matchLen) });
+				idx += matchLen;
+				oldSpanIdx++;
+				continue;
+			}
+			// Divergence: insert new text, inherit formatting from previous span if possible
+			let insertStart = idx;
+			let nextMatchIdx = -1;
+			for (let j = idx + 1; j <= text.length; ++j) {
+				let sub = text.slice(j, j + span.text.length);
+				if (sub && sub === span.text.slice(0, sub.length)) {
+					nextMatchIdx = j;
+					break;
+				}
+			}
+			let newText = text.slice(insertStart, nextMatchIdx === -1 ? text.length : nextMatchIdx);
+			let fmtSpan = oldSpanIdx > 0 ? oldModel[oldSpanIdx - 1] : span;
+			let newSpan = { text: newText };
+			for (const key of Object.keys(fmtSpan)) {
+				if (key !== 'text') newSpan[key] = fmtSpan[key];
+			}
+			newModel.push(newSpan);
+			idx += newText.length;
+			if (nextMatchIdx !== -1) {
+				// Resume matching with current span
+			}
+		} else {
+			// New text at the end, inherit formatting from last span if possible
+			let fmtSpan = oldModel.length ? oldModel[oldModel.length - 1] : {};
+			let newSpan = { text: text[idx] };
+			for (const key of Object.keys(fmtSpan)) {
+				if (key !== 'text') newSpan[key] = fmtSpan[key];
+			}
+			newModel.push(newSpan);
+			idx++;
+		}
+	}
+	// Split at line breaks
+	let splitModel = [];
+	for (const span of newModel) {
+		if (span.text.includes('\n')) {
+			let lines = span.text.split(/(\n)/);
+			for (let i = 0; i < lines.length; ++i) {
+				if (lines[i] === '\n') {
+					splitModel.push({ text: '\n' });
+				} else if (lines[i]) {
+					let newSpan = {};
+					for (const key in span) {
+						if (key !== 'text') newSpan[key] = span[key];
+					}
+					newSpan.text = lines[i];
+					splitModel.push(newSpan);
+				}
+			}
+		} else {
+			let newSpan = {};
+			for (const key in span) {
+				if (key !== 'text') newSpan[key] = span[key];
+			}
+			newSpan.text = span.text;
+			splitModel.push(newSpan);
+		}
+	}
+	newModel = splitModel.filter(s => s.text && s.text.length > 0 || s.text === '\n');
+	if (newModel.length === 0) newModel = [{ text: '' }];
+	this.model = newModel;
+}
 
 	/**
 	 * Render the model to the contenteditable div
 	 */
 	_render() {
-		// Save selection
-		const selInfo = this._getSelectionOffsets();
-		// Build HTML
-		let html = '';
-		for (const span of this.model) {
-			let classList = [];
-			let styleList = [];
-			for (const key of Object.keys(span)) {
-				if (key === 'text') continue;
-				if (key.endsWith('Value')) {
-					const format = key.slice(0, -5);
-					if (span[format]) {
-						styleList.push(`--${format}: ${span[key]}`);
-					}
-				} else if (span[key]) {
-					classList.push(key);
+				console.log(this.model);
+			// Save selection
+			const selInfo = this._getSelectionOffsets();
+			// Build HTML
+			let html = '';
+			for (const span of this.model) {
+				if (span.text === '\n') {
+					html += '<br>';
+					continue;
 				}
+				let classList = [];
+				let styleList = [];
+				for (const key of Object.keys(span)) {
+					if (key === 'text') continue;
+					if (key.endsWith('Value')) {
+						const format = key.slice(0, -5);
+						if (span[format]) {
+							styleList.push(`--${format}: ${span[key]}`);
+						}
+					} else if (span[key]) {
+						classList.push(key);
+					}
+				}
+				const classAttr = classList.length ? ` class="${classList.join(' ')}"` : '';
+				const styleAttr = styleList.length ? ` style="${styleList.join('; ')};"` : '';
+				html += `<span${classAttr}${styleAttr}>${this._escapeHTML(span.text)}</span>`;
 			}
-			const classAttr = classList.length ? ` class="${classList.join(' ')}"` : '';
-			const styleAttr = styleList.length ? ` style="${styleList.join('; ')};"` : '';
-			html += `<span${classAttr}${styleAttr}>${this._escapeHTML(span.text)}</span>`;
-		}
-		this.el.innerHTML = html || '<br>';
-		// Restore selection
-		this._restoreSelectionOffsets(selInfo);
+			this.el.innerHTML = html || '<br>';
+			// Restore selection
+			this._restoreSelectionOffsets(selInfo);
 	}
 
 	/**
@@ -527,25 +825,148 @@ class RichTextEditor {
 	_updateModelFromDOM() {
 		// Get plain text
 		const text = this.el.innerText.replace(/\r?\n$/, ''); // Remove trailing newline
-		// Try to preserve formatting for unchanged text
 		let newModel = [];
-		let idx = 0;
-		for (const span of this.model) {
-			if (!span.text) continue;
-			const part = text.slice(idx, idx + span.text.length);
-			if (part === span.text) {
-				newModel.push({ ...span });
-				idx += span.text.length;
+		let oldModel = this.model;
+		let textPos = 0;
+		let oldSpanIdx = 0;
+		let oldSpanOffset = 0;
+		while (textPos < text.length) {
+			if (oldSpanIdx < oldModel.length) {
+				let span = oldModel[oldSpanIdx];
+				let spanRem = span.text.length - oldSpanOffset;
+				let matchLen = 0;
+				// Find how much of the text matches the old span
+				for (let k = 0; k < spanRem && textPos + k < text.length; ++k) {
+					if (text[textPos + k] === span.text[oldSpanOffset + k]) {
+						matchLen++;
+					} else {
+						break;
+					}
+				}
+				if (matchLen > 0) {
+					newModel.push({ ...span, text: text.substr(textPos, matchLen) });
+					textPos += matchLen;
+					oldSpanOffset += matchLen;
+					if (oldSpanOffset >= span.text.length) {
+						oldSpanIdx++;
+						oldSpanOffset = 0;
+					}
+					continue;
+				}
+				// If no match, insert new text up to the next span boundary
+				let nextSpanIdx = oldSpanIdx + 1;
+				let insertEnd = text.length;
+				if (nextSpanIdx < oldModel.length) {
+					let nextSpanText = oldModel[nextSpanIdx].text;
+					let boundaryIdx = -1;
+					if (text.substr(textPos, nextSpanText.length) === nextSpanText) {
+						boundaryIdx = textPos;
+					} else {
+						// Only allow exact match at boundary
+						for (let i = 1; i <= text.length - textPos - nextSpanText.length + 1; ++i) {
+							if (text.substr(textPos + i, nextSpanText.length) === nextSpanText) {
+								boundaryIdx = textPos + i;
+								break;
+							}
+						}
+					}
+					if (boundaryIdx !== -1) {
+						insertEnd = boundaryIdx;
+					}
+				}
+				if (insertEnd > textPos) {
+					let fmtSpan = span;
+					let newSpan = { text: text.substring(textPos, insertEnd) };
+					for (const key of Object.keys(fmtSpan)) {
+						if (key !== 'text') newSpan[key] = fmtSpan[key];
+					}
+					newModel.push(newSpan);
+				}
+				textPos = insertEnd;
+				if (nextSpanIdx < oldModel.length && text.substr(textPos, oldModel[nextSpanIdx].text.length) === oldModel[nextSpanIdx].text) {
+					oldSpanIdx = nextSpanIdx;
+					oldSpanOffset = 0;
+				} else {
+					// If not matching, stay on current span
+				}
+				continue;
 			} else {
-				break;
+				// New text at the end, inherit formatting from last span if possible
+				let fmtSpan = oldModel.length ? oldModel[oldModel.length - 1] : {};
+				let newSpan = { text: text[textPos] };
+				for (const key of Object.keys(fmtSpan)) {
+					if (key !== 'text') newSpan[key] = fmtSpan[key];
+				}
+				newModel.push(newSpan);
+				textPos++;
 			}
 		}
-		// Add any new text as unformatted
-		if (idx < text.length) {
-			newModel.push({ text: text.slice(idx) });
+		// Split at line breaks
+		let splitModel = [];
+		for (const span of newModel) {
+			if (span.text.includes('\n')) {
+				let lines = span.text.split(/(\n)/);
+				for (let i = 0; i < lines.length; ++i) {
+					if (lines[i] === '\n') {
+						splitModel.push({ text: '\n' });
+					} else if (lines[i]) {
+						let newSpan = { ...span, text: lines[i] };
+						delete newSpan.text; newSpan.text = lines[i];
+						splitModel.push(newSpan);
+					}
+				}
+			} else {
+				splitModel.push(span);
+			}
 		}
+		newModel = splitModel.filter(s => s.text && s.text.length > 0 || s.text === '\n');
 		if (newModel.length === 0) newModel = [{ text: '' }];
 		this.model = newModel;
+	}
+
+	/**
+	 * Helper: get line indices of spans in the model
+	 * Returns array of line indices for selected lines
+	 */
+	_getSelectedLines() {
+		const sel = this._getSelectionOffsets();
+		if (!sel) return [];
+		const { start, end } = sel;
+		// If collapsed, treat as selecting the line at cursor
+		let idx = 0;
+		let charToLine = [];
+		let line = 0;
+		for (const span of this.model) {
+			for (let i = 0; i < span.text.length; ++i) {
+				charToLine.push(line);
+				if (span.text[i] === '\n') line++;
+			}
+		}
+		if (charToLine.length === 0) return [];
+		let startLine = charToLine[Math.min(start, charToLine.length - 1)];
+		let endLine = charToLine[Math.max(end - 1, 0)];
+		if (start === end) endLine = startLine;
+		let lines = [];
+		for (let l = startLine; l <= endLine; ++l) lines.push(l);
+		return lines;
+	}
+
+	/**
+	 * Helper: get line index for a span in the model
+	 * @param {number} spanIdx
+	 * @returns {number}
+	 */
+	_getLineIndexOfSpan(spanIdx) {
+		let idx = 0;
+		let line = 0;
+		for (let i = 0; i < this.model.length; ++i) {
+			const span = this.model[i];
+			if (i === spanIdx) return line;
+			for (let j = 0; j < span.text.length; ++j) {
+				if (span.text[j] === '\n') line++;
+			}
+		}
+		return line;
 	}
 
 	/**

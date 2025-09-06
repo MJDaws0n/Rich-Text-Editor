@@ -17,7 +17,10 @@
 		<input type="color" id="highlight-color" value="#ffff00">
 		<button type="button" id="highlight-btn">Remove Highlight</button>
 		<button type="button" id="remove-formatting-btn">Remove Formatting</button>
-		<!-- Add more buttons here -->
+		<!-- Alignment buttons -->
+		<button type="button" id="align-left-btn">Left Align</button>
+		<button type="button" id="align-center-btn">Center Align</button>
+		<button type="button" id="align-right-btn">Right Align</button>
 	</div>
 	<div id="editor" class="richtext-editor" contenteditable="true"></div>
 	<script src="richtext-editor.js"></script>
@@ -37,6 +40,18 @@
 				editor.removeAllFormatting();
 			}
 		};
+
+		// Alignment button handlers
+		document.getElementById('align-left-btn').onclick = () => {clearAlign(); editor.toggleFormatOnLine('align-left')};
+		document.getElementById('align-center-btn').onclick = () => {clearAlign(); editor.toggleFormatOnLine('align-center')};
+		document.getElementById('align-right-btn').onclick = () => {clearAlign(); editor.toggleFormatOnLine('align-right')};
+
+
+		function clearAlign(){
+			editor.removeFormatFromLine('align-left');
+			editor.removeFormatFromLine('align-center');
+			editor.removeFormatFromLine('align-right');
+		}
 
 		editor.on('change', html => console.log('New content:', html));
 		editor.on('select', () => {
@@ -65,6 +80,22 @@
 			} else {
 				document.getElementById('highlight-btn').classList.remove('active');
 			}
+			// Alignment button active state
+			if (editor.lineHasFormat('align-left')) {
+				document.getElementById('align-left-btn').classList.add('active');
+			} else {
+				document.getElementById('align-left-btn').classList.remove('active');
+			}
+			if (editor.lineHasFormat('align-center')) {
+				document.getElementById('align-center-btn').classList.add('active');
+			} else {
+				document.getElementById('align-center-btn').classList.remove('active');
+			}
+			if (editor.lineHasFormat('align-right')) {
+				document.getElementById('align-right-btn').classList.add('active');
+			} else {
+				document.getElementById('align-right-btn').classList.remove('active');
+			}
 		});
 
 		// Set some test content using setContent
@@ -79,3 +110,5 @@
 	</script>
 </body>
 </html>
+
+FUTURE ME NEW LINES DONT WORK

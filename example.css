@@ -67,3 +67,20 @@ body {
 .highlight {
 	background-color: var(--highlight);
 }
+
+/* Alignment classes for line formatting */
+.align-left {
+	display: inline-block;
+	width: 100%;
+	text-align: left;
+}
+.align-center {
+	display: inline-block;
+	width: 100%;
+	text-align: center;
+}
+.align-right {
+	display: inline-block;
+	width: 100%;
+	text-align: right;
+}
