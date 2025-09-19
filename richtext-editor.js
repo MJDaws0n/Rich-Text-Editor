@@ -4,1080 +4,1277 @@
 // https://github.com/MJDaws0n/Rich-Text-Editor/tree/main
 
 class RichTextEditor {
-	/**
-	 * Event listeners stuff
-	 */
-	_listeners = {};
-	/**
-	 * @param {HTMLElement} editableElement - The contenteditable element
-	 */
-	constructor(editableElement) {
-		if (!editableElement || !(editableElement instanceof HTMLElement)) {
-			throw new Error('Editable element must be a valid HTMLElement');
-		}
-		if (!editableElement.isContentEditable) {
-			throw new Error('Element must have contenteditable="true"');
-		}
-		this.el = editableElement;
-		// The models like: [{ text: string, bold?: true, italic?: true, ... }]
-		this.model = [{ text: '' }];
-		// The model is always an array of contiguous runs of text with formatting:
-		// [{ text: "Bold ", bold: true }, { text: "Italic ", italic: true }, ...]
-		this._bindEvents();
-		this._render();
-		this._emit('change', this.getHTML());
-	}
-	/**
-	 * Add an event listener
-	 * @param {string} event
-	 * @param {Function} callback
-	 */
-	on(event, callback) {
-		if (!this._listeners[event]) this._listeners[event] = [];
-		this._listeners[event].push(callback);
-	}
+    /**
+     * Internal content model.
+     * Array of lines; each line is an array of text items with optional metadata.
+     * @type {Array<Array<{type:'text', content:string, className?:string, styles?:Object}>> & Array<{_lineClassName?:string, _lineStyles?:Object}>}
+     */
+    content = [];
 
 	/**
-	 * Remove an event listener
-	 * @param {string} event
-	 * @param {Function} callback
+	 * Create a RichTextEditor bound to a contenteditable root element.
+	 * @param {HTMLElement} textarea - The contenteditable container element.
 	 */
-	off(event, callback) {
-		if (!this._listeners[event]) return;
-		this._listeners[event] = this._listeners[event].filter(fn => fn !== callback);
-	}
+	constructor(textarea) {
+        this.textarea = textarea;
+        this.textarea.addEventListener('input', this.handleInput.bind(this));
 
-	/**
-	 * Emit an event
-	 * @param {string} event
-	 * @param  {...any} args
-	 */
-	_emit(event, ...args) {
-		if (!this._listeners[event]) return;
-		for (const fn of this._listeners[event]) {
-			try { fn(...args); } catch (e) { }
-		}
-	}
+        // Basic event system
+        this._listeners = {};
+        this._lastSelection = { start: null, end: null };
 
-	// --- Public API ---
-	// These are example functions made for the example
+        // Selection tracking
+        this._onSelectionChangeBound = this._onSelectionChange.bind(this);
+        document.addEventListener('selectionchange', this._onSelectionChangeBound);
+    }
 
-	// You can add you own here, but most likely you will
-	// want to just trigger instance.toggleFormat('classname'); in
-	// your own code
+    /**
+     * Register an event listener.
+     * Supported events: `change` (model/html changed), `select` (selection changed).
+     * @param {string} type - Event type.
+     * @param {Function} handler - Callback invoked with event-specific args.
+     * @returns {this}
+     */
+    on(type, handler) {
+        if (!this._listeners[type]) this._listeners[type] = [];
+        this._listeners[type].push(handler);
+        return this;
+    }
 
-	bold() {
-		this.toggleFormat('bold');
-	}
+    /**
+     * Emit an internal event to registered listeners.
+     * @private
+     * @param {string} type - Event type.
+     * @param {...any} args - Arguments passed to listeners.
+     */
+    _emit(type, ...args) {
+        const list = this._listeners[type] || [];
+        for (const fn of list) {
+            try { fn(...args); } catch (e) { /* noop */ }
+        }
+    }
 
-	highlight(value = '#ffff00') {
-		this.addFormat('highlight', value);
-	}
+    /**
+     * Internal: handler for document selection changes.
+     * Emits `select` with [start, end] and selected text.
+     * @private
+     */
+    _onSelectionChange() {
+        console.log('selectionchange');
+        // Only emit if selection is in this editor
+        const sel = window.getSelection?.();
+        if (!sel || sel.rangeCount === 0) return;
+        const range = sel.getRangeAt(0);
+        if (!this.textarea.contains(range.startContainer) && !this.textarea.contains(range.endContainer)) return;
 
-	/**
-	 * Add a format to all spans in the selected lines
-	 * @param {string} format
-	 * @param {string|undefined} value
-	 */
-	addFormatToLine(format, value) {
-		const valueKey = format + 'Value';
-		const lines = this._getSelectedLines();
-		if (!lines || lines.length === 0) return;
-		let newModel = [];
-		for (let i = 0; i < this.model.length; ++i) {
-			const span = this.model[i];
-			if (lines.includes(this._getLineIndexOfSpan(i))) {
-				let newSpan = { ...span };
-				newSpan[format] = true;
-				if (typeof value !== 'undefined') {
-					newSpan[valueKey] = value;
-				}
-				newModel.push(newSpan);
-			} else {
-				newModel.push({ ...span });
+        const start = this.getCaretStartIndex();
+        const end = this.getCaretIndex();
+
+        // Still emit regardless of change, to allow select event even if no change
+        const selectedText = this._getPlainTextInRange(start, end);
+        this._emit('select', [start, end], selectedText);
+
+
+        if (start === this._lastSelection.start && end === this._lastSelection.end) return;
+
+        this._lastSelection = { start, end };
+    }
+
+    /**
+     * Internal: get plain text between two linear indices.
+     * @private
+     * @param {number} selectionStart - Start index (inclusive).
+     * @param {number} selectionEnd - End index (exclusive).
+     * @returns {string} Plain text within the given range.
+     */
+    _getPlainTextInRange(selectionStart, selectionEnd) {
+        if (selectionStart > selectionEnd) { const t = selectionStart; selectionStart = selectionEnd; selectionEnd = t; }
+        if (selectionStart === selectionEnd) return '';
+
+        let idx = 0;
+        let acc = '';
+
+        this.content.forEach((line) => {
+            // Account for the DIV token in index math; do not add text for it
+            idx += 1;
+
+            line.forEach((item) => {
+                if (item.type !== 'text') return;
+
+                if (item.content === '') {
+                    // BR counts as +1 in index math; do not add text for it
+                    idx += 1;
+                    return;
+                }
+
+                const len = item.content.length;
+                const chunkStart = idx;
+                const chunkEnd = idx + len;
+
+                const overlapStart = Math.max(selectionStart, chunkStart);
+                const overlapEnd = Math.min(selectionEnd, chunkEnd);
+
+                if (overlapStart < overlapEnd) {
+                    const localStart = overlapStart - chunkStart;
+                    const localEnd = overlapEnd - chunkStart;
+                    acc += item.content.slice(localStart, localEnd);
+                }
+
+                idx += len;
+            });
+        });
+
+        return acc;
+    }
+
+    /**
+     * Toggle format on the selected text.
+     * Adds the class/styles if not present on the entire selection; otherwise removes it.
+     * @param {string} className - Space-separated CSS class(es) to toggle.
+     * @param {Object|Array} [styles={}] - Optional inline styles to apply when adding. Accepts object or array of [prop, value] pairs or objects.
+     * @returns {void}
+     */
+    toggleFormat(className, styles = {}) {
+        if (this.hasFormat(className)) {
+            this.unapplyFormat(className);
+        } else {
+            this.applyFormat(className, styles);
+        }
+    }
+
+    /**
+     * Toggle format on the current line(s).
+     * Applies the class/styles to all selected lines if missing; otherwise removes them.
+     * @param {string} className - Space-separated CSS class(es) to toggle on lines.
+     * @param {Object|Array} [styles={}] - Optional inline styles for line elements.
+     * @returns {void}
+     */
+    toggleFormatOnLine(className, styles = {}) {
+        if(this.lineHasFormat()){
+            this.removeFormatFromLine(className);
+        } else {
+            this.applyFormatOnLine(className, styles);
+        }
+    }
+
+    /**
+     * Apply format to the selected text.
+     * Merges class tokens and shallow-merges inline styles on overlapping ranges.
+     * @param {string} className - Space-separated CSS class(es) to add.
+     * @param {Object|Array} [styles={}] - Optional inline styles to apply; array/object accepted.
+     * @returns {void}
+     */
+    applyFormat(className, styles = {}) {
+        let selectionStart = this.getCaretStartIndex();
+        let selectionEnd = this.getCaretIndex();
+
+        // Normalise selection bounds
+        if (selectionStart > selectionEnd) {
+            const tmp = selectionStart;
+            selectionStart = selectionEnd;
+            selectionEnd = tmp;
+        }
+        if (selectionStart === selectionEnd) return;
+
+        // Normalize styles input to an object of {prop: value}
+        const normalizeStyles = (val) => {
+            if (!val) return {};
+            if (typeof val === 'object' && !Array.isArray(val)) return val;
+            if (Array.isArray(val)) {
+                const out = {};
+                for (const entry of val) {
+                    if (!entry) continue;
+                    if (Array.isArray(entry) && entry.length >= 2) out[String(entry[0])] = String(entry[1]);
+                    else if (typeof entry === 'object') {
+                        Object.entries(entry).forEach(([k, v]) => { out[String(k)] = String(v); });
+                    }
+                }
+                return out;
+            }
+            return {};
+        };
+        const selectionStyles = normalizeStyles(styles);
+
+        const toClassSet = (cls) => new Set(String(cls || '').trim().split(/\s+/).filter(Boolean));
+        const canonClass = (cls) => Array.from(toClassSet(cls)).sort().join(' ');
+        const mergeClasses = (orig, add) => {
+            const set = toClassSet(orig);
+            for (const token of toClassSet(add)) set.add(token);
+            return Array.from(set).join(' ');
+        };
+
+        const makeItem = (text, cls, stl) => {
+            const obj = { type: 'text', content: text };
+            if (cls) obj.className = canonClass(cls);
+            const stlObj = normalizeStyles(stl);
+            if (Object.keys(stlObj).length) obj.styles = stlObj;
+            return obj;
+        };
+        const sameStyles = (a, b) => {
+            const A = a || null, B = b || null;
+            try { return JSON.stringify(A) === JSON.stringify(B); } catch { return false; }
+        };
+        const mergeAdjacent = (arr) => {
+            const out = [];
+            for (const it of arr) {
+                if (out.length) {
+                    const prev = out[out.length - 1];
+                    const bothText = prev.type === 'text' && it.type === 'text';
+                    const nonEmpty = prev.content !== '' && it.content !== '';
+                    const sameClass = canonClass(prev.className) === canonClass(it.className);
+                    const sameA = sameStyles(prev.styles, it.styles);
+                    if (bothText && nonEmpty && sameClass && sameA) {
+                        prev.content += it.content;
+                        continue;
+                    }
+                }
+                out.push(it);
+            }
+            return out;
+        };
+
+        let idx = 0;
+        const updatedContent = [];
+
+        this.content.forEach((line) => {
+            const updatedLine = [];
+            idx += 1; // account for DIV
+
+            for (const item of line) {
+                if (item.type !== 'text') {
+                    updatedLine.push(item);
+                    continue;
+                }
+
+                if (item.content === '') {
+                    idx += 1; // BR
+                    updatedLine.push(item);
+                    continue;
+                }
+
+                const originalClass = item.className;
+                const originalStyles = item.styles;
+                const text = item.content;
+                let offset = 0;
+                let remaining = text.length;
+
+                while (remaining > 0) {
+                    const chunkStart = idx;
+                    const chunkEnd = idx + remaining;
+
+                    // Entirely outside selection
+                    if (selectionEnd <= chunkStart || selectionStart >= chunkEnd) {
+                        updatedLine.push(makeItem(text.slice(offset, offset + remaining), originalClass, originalStyles));
+                        idx += remaining;
+                        remaining = 0;
+                        break;
+                    }
+
+                    // Pre-selection
+                    if (selectionStart > chunkStart) {
+                        const preLen = Math.min(remaining, selectionStart - chunkStart);
+                        if (preLen > 0) {
+                            updatedLine.push(makeItem(text.slice(offset, offset + preLen), originalClass, originalStyles));
+                            idx += preLen;
+                            offset += preLen;
+                            remaining -= preLen;
+                            continue;
+                        }
+                    }
+
+                    // Selected
+                    const selLen = Math.min(remaining, selectionEnd - idx);
+                    if (selLen > 0) {
+                        // Merge class tokens (add new class without removing existing)
+                        const mergedClass = className ? mergeClasses(originalClass, className) : originalClass;
+                        // Merge styles shallowly; new styles override same-name props
+                        const mergedStyles = Object.keys(selectionStyles).length
+                            ? { ...(originalStyles || {}), ...selectionStyles }
+                            : originalStyles;
+
+                        updatedLine.push(makeItem(text.slice(offset, offset + selLen), mergedClass, mergedStyles));
+                        idx += selLen;
+                        offset += selLen;
+                        remaining -= selLen;
+                        continue;
+                    }
+                }
+            }
+
+            // Merge and preserve line-level metadata
+            const mergedLine = mergeAdjacent(updatedLine);
+            mergedLine._lineClassName = line._lineClassName;
+            if (line._lineStyles) mergedLine._lineStyles = { ...line._lineStyles };
+            updatedContent.push(mergedLine);
+        });
+
+        this.content = updatedContent;
+        this.updateDom(this.content);
+        // Preserve selection
+        this.setSelection(selectionStart, selectionEnd);
+        // Emit change with content and html
+        this._emit('change', this.content, this.textarea.innerHTML);
+    }
+
+    /**
+     * Remove formatting from the selected text.
+     * If `className` is provided, removes only those class token(s). If empty/falsy, removes all classes and inline styles in the selection.
+     * @param {string} [className] - Space-separated class token(s) to remove. If omitted/empty, clears all formatting.
+     * @returns {void}
+     */
+    unapplyFormat(className) {
+        let selectionStart = this.getCaretStartIndex();
+        let selectionEnd = this.getCaretIndex();
+
+        if (selectionStart > selectionEnd) {
+            const tmp = selectionStart;
+            selectionStart = selectionEnd;
+            selectionEnd = tmp;
+        }
+        if (selectionStart === selectionEnd) return;
+
+        const removeAll = className == null || String(className).trim() === '';
+
+        // Class helpers
+        const toClassSet = (cls) => new Set(String(cls || '').trim().split(/\s+/).filter(Boolean));
+        const canonClass = (cls) => Array.from(toClassSet(cls)).sort().join(' ');
+        const removeClasses = (orig, remove) => {
+            const set = toClassSet(orig);
+            for (const token of toClassSet(remove)) set.delete(token);
+            return Array.from(set).join(' ');
+        };
+
+        const makeItem = (text, cls, styles) => {
+            const obj = { type: 'text', content: text };
+            const canon = canonClass(cls);
+            if (canon) obj.className = canon;
+            if (styles && Object.keys(styles).length) obj.styles = styles;
+            return obj;
+        };
+        const sameStyles = (a, b) => {
+            const A = a || null, B = b || null;
+            try { return JSON.stringify(A) === JSON.stringify(B); } catch { return false; }
+        };
+        const mergeAdjacent = (arr) => {
+            const out = [];
+            for (const it of arr) {
+                if (out.length) {
+                    const prev = out[out.length - 1];
+                    const bothText = prev.type === 'text' && it.type === 'text';
+                    const nonEmpty = prev.content !== '' && it.content !== '';
+                    const sameClass = canonClass(prev.className) === canonClass(it.className);
+                    const sameA = sameStyles(prev.styles, it.styles);
+                    if (bothText && nonEmpty && sameClass && sameA) {
+                        prev.content += it.content;
+                        continue;
+                    }
+                }
+                out.push(it);
+            }
+            return out;
+        };
+
+        let idx = 0;
+        const updatedContent = [];
+
+        this.content.forEach((line) => {
+            const updatedLine = [];
+            idx += 1; // account for DIV per line
+
+            for (const item of line) {
+                if (item.type !== 'text') {
+                    updatedLine.push(item);
+                    continue;
+                }
+
+                if (item.content === '') {
+                    idx += 1; // BR
+                    updatedLine.push(item);
+                    continue;
+                }
+
+                const originalClass = item.className;
+                const originalStyles = item.styles;
+                const text = item.content;
+
+                let offset = 0;
+                let remaining = text.length;
+
+                while (remaining > 0) {
+                    const chunkStart = idx;
+                    const chunkEnd = idx + remaining;
+
+                    // Entirely outside selection
+                    if (selectionEnd <= chunkStart || selectionStart >= chunkEnd) {
+                        updatedLine.push(makeItem(text.slice(offset, offset + remaining), originalClass, originalStyles));
+                        idx += remaining;
+                        remaining = 0;
+                        break;
+                    }
+
+                    // Pre-selection
+                    if (selectionStart > chunkStart) {
+                        const preLen = Math.min(remaining, selectionStart - chunkStart);
+                        if (preLen > 0) {
+                            updatedLine.push(makeItem(text.slice(offset, offset + preLen), originalClass, originalStyles));
+                            idx += preLen;
+                            offset += preLen;
+                            remaining -= preLen;
+                            continue;
+                        }
+                    }
+
+                    // Selected portion
+                    const selLen = Math.min(remaining, selectionEnd - idx);
+                    if (selLen > 0) {
+                        const newClass = removeAll ? undefined : removeClasses(originalClass, className);
+                        const newStyles = removeAll ? undefined : originalStyles;
+                        updatedLine.push(makeItem(text.slice(offset, offset + selLen), newClass, newStyles));
+                        idx += selLen;
+                        offset += selLen;
+                        remaining -= selLen;
+                        continue;
+                    }
+                }
+            }
+
+            // Merge and preserve line-level metadata
+            const mergedLine = mergeAdjacent(updatedLine);
+            mergedLine._lineClassName = line._lineClassName;
+            if (line._lineStyles) mergedLine._lineStyles = { ...line._lineStyles };
+            updatedContent.push(mergedLine);
+        });
+
+        this.content = updatedContent;
+        this.updateDom(this.content);
+        // Preserve selection
+        this.setSelection(selectionStart, selectionEnd);
+        // Emit change with content and html
+        this._emit('change', this.content, this.textarea.innerHTML);
+    }
+
+    /**
+     * Remove formatting across the entire editor.
+     * If `className` is provided, removes only that/those class(es) everywhere; otherwise clears all classes and styles.
+     * Preserves selection and emits `change`.
+     * @param {string} [className] - Space-separated class token(s) to remove globally; if omitted/empty, removes all.
+     * @returns {void}
+     */
+    unapplyAllFormat(className) {
+        console.log('here');
+        const selectionStart = this.getCaretStartIndex();
+        const selectionEnd = this.getCaretIndex();
+
+        const removeAll = className == null || String(className).trim() === '';
+
+        // Helpers (match logic used elsewhere)
+        const toClassSet = (cls) => new Set(String(cls || '').trim().split(/\s+/).filter(Boolean));
+        const canonClass = (cls) => Array.from(toClassSet(cls)).sort().join(' ');
+        const removeClasses = (orig, remove) => {
+            const set = toClassSet(orig);
+            for (const token of toClassSet(remove)) set.delete(token);
+            return Array.from(set).join(' ');
+        };
+        const sameStyles = (a, b) => {
+            const A = a || null, B = b || null;
+            try { return JSON.stringify(A) === JSON.stringify(B); } catch { return false; }
+        };
+        const mergeAdjacent = (arr) => {
+            const out = [];
+            for (const it of arr) {
+                if (out.length) {
+                    const prev = out[out.length - 1];
+                    const bothText = prev.type === 'text' && it.type === 'text';
+                    const nonEmpty = prev.content !== '' && it.content !== '';
+                    const sameClass = (canonClass(prev.className) === canonClass(it.className));
+                    const sameA = sameStyles(prev.styles, it.styles);
+                    if (bothText && nonEmpty && sameClass && sameA) {
+                        prev.content += it.content;
+                        continue;
+                    }
+                }
+                out.push(it);
+            }
+            return out;
+        };
+
+        const updatedContent = this.content.map((line) => {
+            const updatedLine = line.map((item) => {
+                if (item.type !== 'text') return item;
+                if (item.content === '') return item; // keep BRs
+
+                let newClass = item.className;
+                let newStyles = item.styles;
+
+                if (removeAll) {
+                    newClass = undefined;
+                    newStyles = undefined;
+                } else {
+                    newClass = removeClasses(newClass, className);
+                }
+
+                const obj = { type: 'text', content: item.content };
+                const canon = canonClass(newClass);
+                if (canon) obj.className = canon;
+                if (!removeAll && newStyles && Object.keys(newStyles).length) obj.styles = newStyles;
+                return obj;
+            });
+
+            // Merge and preserve line-level metadata
+            const merged = mergeAdjacent(updatedLine);
+            merged._lineClassName = line._lineClassName;
+            if (line._lineStyles) merged._lineStyles = { ...line._lineStyles };
+            return merged;
+        });
+
+        this.content = updatedContent;
+        this.updateDom(this.content);
+        this.setSelection(selectionStart, selectionEnd);
+        this._emit('change', this.content, this.textarea.innerHTML);
+    }
+
+    /**
+     * Apply a class and optional inline styles to the entire line(s).
+     * If selection is collapsed, applies to the caret line.
+     * @param {string} className - Space-separated CSS class(es) to add to line elements.
+     * @param {Object|Array} [styles={}] - Inline styles to merge into line elements.
+     * @returns {void}
+     */
+    applyFormatOnLine(className, styles = {}) {
+        if (!className || String(className).trim() === '') return;
+
+        const selectionStart = this.getCaretStartIndex();
+        const selectionEnd = this.getCaretIndex();
+
+        // Helpers
+        const normalizeStyles = (val) => {
+            if (!val) return {};
+            if (typeof val === 'object' && !Array.isArray(val)) return val;
+            if (Array.isArray(val)) {
+                const out = {};
+                for (const entry of val || []) {
+                    if (!entry) continue;
+                    if (Array.isArray(entry) && entry.length >= 2) out[String(entry[0])] = String(entry[1]);
+                    else if (typeof entry === 'object') Object.entries(entry).forEach(([k, v]) => out[String(k)] = String(v));
+                }
+                return out;
+            }
+            return {};
+        };
+        const toClassSet = (cls) => new Set(String(cls || '').trim().split(/\s+/).filter(Boolean));
+        const canonClass = (cls) => Array.from(toClassSet(cls)).sort().join(' ');
+        const mergeClasses = (orig, add) => {
+            const set = toClassSet(orig);
+            for (const token of toClassSet(add)) set.add(token);
+            return Array.from(set).join(' ');
+        };
+
+        const lineIndexes = this._getSelectedLineIndexes(selectionStart, selectionEnd);
+        const mergedStyles = normalizeStyles(styles);
+
+        lineIndexes.forEach((li) => {
+            const line = this.content[li];
+            if (!line) return;
+            const newClass = mergeClasses(line._lineClassName, className);
+            line._lineClassName = canonClass(newClass) || undefined;
+            if (Object.keys(mergedStyles).length) {
+                line._lineStyles = { ...(line._lineStyles || {}), ...mergedStyles };
+            }
+        });
+
+        this.updateDom(this.content);
+        this.setSelection(selectionStart, selectionEnd);
+        this._emit('change', this.content, this.textarea.innerHTML);
+    }
+
+    /**
+     * Remove a class (or all formatting if empty) from the entire line(s).
+     * If selection is collapsed, removes from the caret line.
+     * @param {string} [className] - Space-separated class token(s) to remove from lines; empty clears all line formatting.
+     * @returns {void}
+     */
+    removeFormatFromLine(className) {
+        const selectionStart = this.getCaretStartIndex();
+        const selectionEnd = this.getCaretIndex();
+        const removeAll = className == null || String(className).trim() === '';
+
+        const toClassSet = (cls) => new Set(String(cls || '').trim().split(/\s+/).filter(Boolean));
+        const canonClass = (cls) => Array.from(toClassSet(cls)).sort().join(' ');
+        const removeClasses = (orig, remove) => {
+            const set = toClassSet(orig);
+            for (const token of toClassSet(remove)) set.delete(token);
+            return Array.from(set).join(' ');
+        };
+
+        const lineIndexes = this._getSelectedLineIndexes(selectionStart, selectionEnd);
+
+        lineIndexes.forEach((li) => {
+            const line = this.content[li];
+            if (!line) return;
+            if (removeAll) {
+                delete line._lineClassName;
+                delete line._lineStyles;
+            } else {
+                const newClass = removeClasses(line._lineClassName, className);
+                line._lineClassName = (canonClass(newClass) || undefined);
+            }
+        });
+
+        this.updateDom(this.content);
+        this.setSelection(selectionStart, selectionEnd);
+        this._emit('change', this.content, this.textarea.innerHTML);
+    }
+
+    /**
+     * Check whether all selected lines (or caret line) have the given class(es).
+     * @param {string} className - Space-separated class token(s) to check.
+     * @returns {boolean} True if every selected line includes all tokens.
+     */
+    lineHasFormat(className) {
+        if (!className || String(className).trim() === '') return false;
+
+        const selectionStart = this.getCaretStartIndex();
+        const selectionEnd = this.getCaretIndex();
+
+        const toClassSet = (cls) => new Set(String(cls || '').trim().split(/\s+/).filter(Boolean));
+        const required = toClassSet(className);
+        if (required.size === 0) return false;
+
+        const lineIndexes = this._getSelectedLineIndexes(selectionStart, selectionEnd);
+        if (lineIndexes.length === 0) return false;
+
+        for (const li of lineIndexes) {
+            const line = this.content[li];
+            const have = toClassSet(line && line._lineClassName);
+            for (const token of required) {
+                if (!have.has(token)) return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Internal: get selected line indexes (inclusive).
+     * Uses DOM to resolve lines. Collapsed selection returns caret line.
+     * @private
+     * @param {number} selectionStart - Linear selection start index.
+     * @param {number} selectionEnd - Linear selection end index.
+     * @returns {number[]} Array of line indexes covered by the selection.
+     */
+    _getSelectedLineIndexes(selectionStart, selectionEnd) {
+        const divs = Array.from(this.textarea.querySelectorAll('div'));
+        if (divs.length === 0) return [];
+
+        const sel = window.getSelection && window.getSelection();
+        if (!sel || sel.rangeCount === 0) return [];
+
+        const range = sel.getRangeAt(0);
+        const getLineIndexForNode = (node) => {
+            let el = node;
+            if (el && el.nodeType !== 1) el = el.parentNode;
+            while (el && el !== this.textarea && el.nodeName && el.nodeName.toLowerCase() !== 'div') {
+                el = el.parentNode;
+            }
+            if (!el || el === this.textarea) return -1;
+            return divs.indexOf(el);
+        };
+
+        let startIdx = getLineIndexForNode(range.startContainer);
+        let endIdx = getLineIndexForNode(range.endContainer);
+
+        // If collapsed or any index invalid, try fallback to caret position line via end index
+        if (selectionStart === selectionEnd) {
+            if (endIdx === -1) {
+                // try start
+                endIdx = startIdx;
+            }
+            if (endIdx === -1) return [];
+            startIdx = endIdx;
+        }
+
+        if (startIdx === -1 && endIdx !== -1) startIdx = endIdx;
+        if (endIdx === -1 && startIdx !== -1) endIdx = startIdx;
+        if (startIdx === -1 && endIdx === -1) return [];
+
+        const from = Math.min(startIdx, endIdx);
+        const to = Math.max(startIdx, endIdx);
+        const out = [];
+        for (let i = from; i <= to; i++) out.push(i);
+        return out;
+    }
+
+    /**
+     * Whether the editor has text focus.
+     * @returns {boolean} True if selection/caret is within the editor.
+     */
+    focused() {
+        const sel = window.getSelection && window.getSelection();
+        if (document.activeElement === this.textarea) return true;
+        if (sel && sel.rangeCount > 0) {
+            const range = sel.getRangeAt(0);
+            return this.textarea.contains(range.startContainer) || this.textarea.contains(range.endContainer);
+        }
+        return false;
+    }
+
+    /**
+     * Handle input events from the contenteditable element.
+     * Parses DOM into the internal model, re-renders, preserves caret, and emits `change`.
+     * @param {Event|null} [event=null] - Input event; may be null for manual triggering.
+     * @returns {void}
+    */
+    handleInput(event = null) {
+        if (event) event.preventDefault();
+        this.content = [];
+        const lines = [];
+        var lastNodeType = null;
+        var caratIndexOffset = 0;
+    
+        Array.from(this.textarea.querySelectorAll('div')).forEach(line => {
+            const currentLine = []
+            // Capture line-level class and styles
+            const lineClass = line.getAttribute('class') || undefined;
+            if (lineClass) currentLine._lineClassName = lineClass;
+            const lineStyles = {};
+            const lineStyleDecl = line.style;
+            for (let i = 0; i < lineStyleDecl.length; i++) {
+                const name = lineStyleDecl[i];
+                const value = lineStyleDecl.getPropertyValue(name);
+                lineStyles[name] = value;
+            }
+            if (Object.keys(lineStyles).length) currentLine._lineStyles = lineStyles;
+
+            Array.from(line.childNodes).forEach(child => {
+                const nodeType = child.nodeName.toLowerCase();
+                if(nodeType === '#text') {
+                    currentLine.push({ type: 'text', content: child.textContent });
+                }
+                if(nodeType === 'span') {
+                    // Preserve className and inline styles (including CSS custom properties)
+                    const className = child.getAttribute('class') || undefined;
+                    const stylesObj = {};
+                    const styleDecl = child.style;
+                    for (let i = 0; i < styleDecl.length; i++) {
+                        const name = styleDecl[i];
+                        const value = styleDecl.getPropertyValue(name);
+                        stylesObj[name] = value;
+                    }
+                    const item = { type: 'text', content: child.textContent };
+                    if (className) item.className = className;
+                    if (Object.keys(stylesObj).length) item.styles = stylesObj;
+                    currentLine.push(item);
+                }
+                if(nodeType === 'br') {
+                    currentLine.push({ type: 'text', content: '' });
+                }
+                lastNodeType = nodeType;
+            });
+            lines.push(currentLine);
+        });
+
+        if(lastNodeType === 'br') {
+            caratIndexOffset += 1;
+        }
+
+        // Nothing in the editor, just plop the current content in a div
+        if(Array.from(this.textarea.querySelectorAll('div')).length === 0 && this.textarea.textContent !== '') {
+            lines.push([{ type: 'text', content: this.textarea.textContent }]);
+        }
+
+        this.content = lines;
+        const cursorPosition = this.getCaretIndex();
+        this.updateDom(this.content);
+        this.setCaretIndex(cursorPosition+caratIndexOffset);
+
+        // Emit change with (content, html)
+        this._emit('change', this.content, this.textarea.innerHTML);
+
+        console.log(this.content);
+    }
+
+    /**
+     * Update the DOM based on the content model.
+     * @param {Array} content - The content model to render (typically `this.content`).
+     * @returns {void}
+     */
+    updateDom(content) {
+        this.textarea.innerHTML = '';
+        content.forEach(line => {
+            const appliedLine = document.createElement('div');
+
+            // Detect a line that only contains a newline (BR-only)
+            const isBrOnlyLine = line.every(item => item.type === 'text' && item.content === '');
+
+            // Apply line-level class and styles if present AND not a BR-only line
+            if (!isBrOnlyLine) {
+                if (line._lineClassName) appliedLine.className = line._lineClassName;
+                if (line._lineStyles && typeof line._lineStyles === 'object') {
+                    Object.entries(line._lineStyles).forEach(([k, v]) => appliedLine.style.setProperty(String(k), String(v)));
+                }
+            }
+
+            line.forEach(item => {
+                if(item.type === 'text') {
+                    if(item.content !== ''){
+                        const span = document.createElement('span');
+                        if (item.className) span.className = item.className;
+                        // Apply inline styles if present (supports objects and arrays of pairs/objects)
+                        if (item.styles) {
+                            const applyStyles = (styles) => {
+                                if (Array.isArray(styles)) {
+                                    styles.forEach(s => {
+                                        if (!s) return;
+                                        if (Array.isArray(s) && s.length >= 2) span.style.setProperty(String(s[0]), String(s[1]));
+                                        else if (typeof s === 'object') {
+                                            Object.entries(s).forEach(([k, v]) => span.style.setProperty(String(k), String(v)));
+                                        }
+                                    });
+                                } else if (typeof styles === 'object') {
+                                    Object.entries(styles).forEach(([k, v]) => span.style.setProperty(String(k), String(v)));
+                                }
+                            };
+                            applyStyles(item.styles);
+                        }
+                        span.textContent = item.content;
+                        appliedLine.appendChild(span);
+                    } else{
+                        const br = document.createElement('br');
+                        appliedLine.appendChild(br);
+                    }
+                }
+            });
+            if(appliedLine.childNodes.length !== 0) {
+                this.textarea.appendChild(appliedLine);
+            }
+        });
+    }
+
+    /**
+     * Combine adjacent texts from the content array.
+     * Not implemented.
+     * @returns {void}
+    */
+    combineAdjacentContent() {
+
+    }
+
+    /**
+     * Set content from an HTML string (alias of `setContentFromHTML`).
+     * @param {string} html - HTML to load into the editor.
+     * @returns {void}
+     */
+    setContent(html) {
+        this.setContentFromHTML(html);
+    }
+
+    /**
+     * Parse HTML and load it into the editor model, then render.
+     * Expects HTML produced by this editor (div lines containing spans/br). Falls back to a single div if none present.
+     * @param {string} html - HTML to parse into the model.
+     * @returns {void}
+     */
+    setContentFromHTML(html) {
+        if (typeof html !== 'string') return;
+
+        // Replace DOM with provided HTML, normalizing to div lines if needed
+        const scratch = document.createElement('div');
+        scratch.innerHTML = html;
+
+        const incomingDivs = Array.from(scratch.querySelectorAll('div'));
+
+        this.textarea.innerHTML = '';
+        if (incomingDivs.length > 0) {
+            incomingDivs.forEach(d => this.textarea.appendChild(d.cloneNode(true)));
+        } else {
+            const lineDiv = document.createElement('div');
+            lineDiv.innerHTML = scratch.innerHTML;
+            this.textarea.appendChild(lineDiv);
+        }
+
+        // Parse DOM -> model and re-render (handleInput also emits 'change')
+        this.handleInput(null);
+
+        // Move caret to end for a clean insertion point
+        try {
+            let endIndex = 0;
+            this.content.forEach(line => {
+                endIndex += 1; // line DIV
+                line.forEach(item => {
+                    if (item.type !== 'text') return;
+                    if (item.content === '') endIndex += 1; else endIndex += item.content.length;
+                });
+            });
+            this.setCaretIndex(endIndex);
+        } catch {}
+    }
+
+    /**
+     * Set content directly from a JSON model compatible with `this.content`.
+     * Performs a shallow normalization of items and line metadata, renders, places caret at end, and emits `change`.
+     * @param {Array} json - Content model to load.
+     * @returns {void}
+     */
+    setContentFromJson(json) {
+        if (!Array.isArray(json)) return;
+
+        // Shallow normalization to expected shape
+        const normalizeStylesObj = (obj) => {
+            if (!obj || typeof obj !== 'object') return undefined;
+            const out = {};
+            Object.entries(obj).forEach(([k, v]) => out[String(k)] = String(v));
+            return Object.keys(out).length ? out : undefined;
+        };
+
+        const normalized = json.map(line => {
+            const outLine = [];
+            if (Array.isArray(line)) {
+                line.forEach(item => {
+                    if (!item || typeof item !== 'object') return;
+                    if (item.type === 'text') {
+                        const obj = { type: 'text', content: String(item.content || '') };
+                        if (item.className) obj.className = String(item.className);
+                        const styles = normalizeStylesObj(item.styles);
+                        if (styles) obj.styles = styles;
+                        outLine.push(obj);
+                    }
+                });
+            }
+            // Preserve line-level metadata if present
+            if (line && typeof line === 'object') {
+                if (line._lineClassName) outLine._lineClassName = String(line._lineClassName);
+                const ls = normalizeStylesObj(line._lineStyles);
+                if (ls) outLine._lineStyles = ls;
+            }
+            return outLine;
+        });
+
+        this.content = normalized;
+        this.updateDom(this.content);
+
+        // Place caret at end and emit change
+        let endIndex = 0;
+        this.content.forEach(line => {
+            endIndex += 1;
+            line.forEach(item => {
+                if (item.type !== 'text') return;
+                if (item.content === '') endIndex += 1; else endIndex += item.content.length;
+            });
+        });
+        this.setCaretIndex(endIndex);
+        this._emit('change', this.content, this.textarea.innerHTML);
+    }
+
+    /**
+     * Get the current HTML content (as rendered by `updateDom`).
+     * @returns {string} The editor's HTML.
+     */
+    getHTML() {
+        // DOM is kept in sync by updateDom; return it directly
+        return this.textarea.innerHTML;
+    }
+
+    /**
+     * Get the current caret index within the content (or selection end).
+     * Counts DIV/BR/P as +1 (newline) for linearization.
+     * @returns {number} Caret index.
+     */
+    getCaretIndex() {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return 0;
+
+        const range = sel.getRangeAt(0);
+        let index = 0;
+
+        // Walk nodes until caret
+        const walker = document.createTreeWalker(this.textarea, NodeFilter.SHOW_ALL, null);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+
+            if (node === range.endContainer) {
+                if (node.nodeType === 3) {
+                    index += range.endOffset; // within text node
+                }
+                break;
+            }
+
+            if (node.nodeType === 3) {
+                index += node.textContent.length;
+            } else if (node.nodeName === "BR" || node.nodeName === "DIV" || node.nodeName === "P") {
+                index += 1; // count as newline
+            }
+        }
+        return index;
+    }
+    /**
+     * Get the current selection start index within the content.
+     * Counts DIV/BR/P as +1 (newline) for linearization.
+     * @returns {number} Selection start index.
+     */
+    getCaretStartIndex() {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return 0;
+
+        const range = sel.getRangeAt(0);
+        let index = 0;
+
+        // Walk nodes until caret start
+        const walker = document.createTreeWalker(this.textarea, NodeFilter.SHOW_ALL, null);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+
+            if (node === range.startContainer) {
+                if (node.nodeType === 3) {
+                    index += range.startOffset; // within text node
+                }
+                break;
+            }
+
+            if (node.nodeType === 3) {
+                index += node.textContent.length;
+            } else if (node.nodeName === "BR" || node.nodeName === "DIV" || node.nodeName === "P") {
+                index += 1; // count as newline
+            }
+        }
+        return index;
+    }
+
+    /**
+     * Set the caret index within the content.
+     * Interprets indexes using the same linearization as `getCaretIndex`.
+     * @param {number} targetIndex - Target caret index.
+     * @returns {void}
+     */
+    setCaretIndex(targetIndex) {
+        const sel = window.getSelection();
+        const range = document.createRange();
+        let index = 0;
+
+        const walker = document.createTreeWalker(this.textarea, NodeFilter.SHOW_ALL, null);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+
+            if (node.nodeType === 3) {
+                const nextIndex = index + node.textContent.length;
+                if (targetIndex <= nextIndex) {
+                    range.setStart(node, targetIndex - index);
+                    range.collapse(true);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                    return;
+                }
+                index = nextIndex;
+            } else if (node.nodeName === "BR" || node.nodeName === "DIV" || node.nodeName === "P") {
+                index += 1; // newline
+                if (targetIndex === index) {
+                    range.setStartAfter(node);
+                    range.collapse(true);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Set a selection range by linear indices (matching `getCaretStartIndex`/`getCaretIndex`).
+     * @param {number} startIndex - Selection start index.
+     * @param {number} endIndex - Selection end index.
+     * @returns {void}
+     */
+    setSelection(startIndex, endIndex) {
+        if (typeof startIndex !== 'number' || typeof endIndex !== 'number') return;
+        let s = Math.max(0, startIndex);
+        let e = Math.max(0, endIndex);
+        if (s > e) { const t = s; s = e; e = t; }
+
+        const sel = window.getSelection();
+        if (!sel) return;
+
+        const locate = (targetIndex) => {
+            let index = 0;
+            const walker = document.createTreeWalker(this.textarea, NodeFilter.SHOW_ALL, null);
+            while (walker.nextNode()) {
+                const node = walker.currentNode;
+                if (node.nodeType === 3) {
+                    const nextIndex = index + node.textContent.length;
+                    if (targetIndex <= nextIndex) {
+                        return { kind: 'text', node, offset: Math.max(0, targetIndex - index) };
+                    }
+                    index = nextIndex;
+                } else if (node.nodeName === 'BR' || node.nodeName === 'DIV' || node.nodeName === 'P') {
+                    index += 1;
+                    if (targetIndex === index) {
+                        return { kind: 'after', node };
+                    }
+                }
+            }
+            return null;
+        };
+
+        const startPos = locate(s);
+        const endPos = locate(e);
+
+        const range = document.createRange();
+
+        // Fallbacks: if positions not found, collapse at end
+        if (startPos) {
+            if (startPos.kind === 'text') range.setStart(startPos.node, startPos.offset);
+            else range.setStartAfter(startPos.node);
+        } else {
+            // fallback to start of textarea
+            const firstText = this.textarea.firstChild;
+            if (firstText) range.setStart(firstText, 0);
+        }
+
+        if (endPos) {
+            if (endPos.kind === 'text') range.setEnd(endPos.node, endPos.offset);
+            else range.setEndAfter(endPos.node);
+        } else {
+            // fallback to end of textarea
+            const walker = document.createTreeWalker(this.textarea, NodeFilter.SHOW_TEXT, null);
+            let lastText = null;
+            while (walker.nextNode()) lastText = walker.currentNode;
+            if (lastText) range.setEnd(lastText, lastText.textContent.length);
+        }
+
+        sel.removeAllRanges();
+        sel.addRange(range);
+    }
+
+    /**
+     * Check if any selected text includes the given class(es).
+     * @param {string} className - Space-separated class token(s) to check.
+     * @returns {boolean} True if any part of the selection has all tokens.
+     */
+    includesClass(className) {
+        let selectionStart = this.getCaretStartIndex();
+        let selectionEnd = this.getCaretIndex();
+        if (selectionStart > selectionEnd) { const t = selectionStart; selectionStart = selectionEnd; selectionEnd = t; }
+        if (selectionStart === selectionEnd) return false;
+
+        const toClassSet = (cls) => new Set(String(cls || '').trim().split(/\s+/).filter(Boolean));
+        const required = toClassSet(className);
+        if (required.size === 0) return false;
+
+        let idx = 0;
+
+        for (const line of this.content) {
+            idx += 1; // account for line DIV
+            for (const item of line) {
+                if (item.type !== 'text') continue;
+
+                if (item.content === '') { // BR represented as empty string
+                    idx += 1;
+                    continue;
+                }
+
+                const len = item.content.length;
+                const chunkStart = idx;
+                const chunkEnd = idx + len;
+
+                const overlapStart = Math.max(selectionStart, chunkStart);
+                const overlapEnd = Math.min(selectionEnd, chunkEnd);
+
+                if (overlapStart < overlapEnd) {
+                    const itemSet = toClassSet(item.className);
+                    let hasAll = true;
+                    for (const token of required) {
+                        if (!itemSet.has(token)) { hasAll = false; break; }
+                    }
+                    if (hasAll) return true;
+                }
+
+                idx += len;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if the entire selected text has the given class(es).
+     * @param {string} className - Space-separated class token(s) to check.
+     * @returns {boolean} True if all selected text includes all tokens.
+     */
+    hasFormat(className) {
+        let selectionStart = this.getCaretStartIndex();
+        let selectionEnd = this.getCaretIndex();
+        if (selectionStart > selectionEnd) { const t = selectionStart; selectionStart = selectionEnd; selectionEnd = t; }
+        if (selectionStart === selectionEnd) return false;
+
+        const toClassSet = (cls) => new Set(String(cls || '').trim().split(/\s+/).filter(Boolean));
+        const required = toClassSet(className);
+        if (required.size === 0) return false;
+
+        let idx = 0;
+        let seenAnyText = false;
+        let allHave = true;
+
+        for (const line of this.content) {
+            idx += 1; // account for line DIV
+            for (const item of line) {
+                if (item.type !== 'text') continue;
+
+                if (item.content === '') { // BR represented as empty string
+                    idx += 1;
+                    continue;
+                }
+
+                const len = item.content.length;
+                const chunkStart = idx;
+                const chunkEnd = idx + len;
+
+                const overlapStart = Math.max(selectionStart, chunkStart);
+                const overlapEnd = Math.min(selectionEnd, chunkEnd);
+
+                if (overlapStart < overlapEnd) {
+                    seenAnyText = true;
+                    const itemSet = toClassSet(item.className);
+                    for (const token of required) {
+                        if (!itemSet.has(token)) { allHave = false; break; }
+                    }
+                    if (!allHave) return false; // early exit
+                }
+
+                idx += len;
+            }
+        }
+
+        if (!seenAnyText) return false;
+        return allHave;
+    }
+
+        /**
+         * Get the current content as a JSON-compatible model.
+         * @returns {Array} Array of lines with items and optional line-level metadata.
+         */
+    getJson() {
+		const cloneStyles = (obj) => {
+			if (!obj || typeof obj !== 'object') return undefined;
+			const out = {};
+			for (const [k, v] of Object.entries(obj)) out[String(k)] = String(v);
+			return Object.keys(out).length ? out : undefined;
+		};
+
+		return this.content.map(line => {
+			const outLine = line.map(item => {
+				if (!item || item.type !== 'text') return null;
+				const cloned = { type: 'text', content: String(item.content || '') };
+				if (item.className) cloned.className = String(item.className);
+				const styles = cloneStyles(item.styles);
+				if (styles) cloned.styles = styles;
+				return cloned;
+			}).filter(Boolean);
+
+			// Preserve line-level metadata
+			if (line && typeof line === 'object') {
+				if (line._lineClassName) outLine._lineClassName = String(line._lineClassName);
+				const ls = cloneStyles(line._lineStyles);
+				if (ls) outLine._lineStyles = ls;
 			}
-		}
-		this.model = this._mergeSpans(newModel);
-		this._render();
-		this._emit('change', this.getHTML());
-	}
-
-	/**
-	 * Remove a format from all spans in the selected lines
-	 * @param {string} format
-	 */
-	removeFormatFromLine(format) {
-		const valueKey = format + 'Value';
-		const lines = this._getSelectedLines();
-		if (!lines || lines.length === 0) return;
-		let newModel = [];
-		for (let i = 0; i < this.model.length; ++i) {
-			const span = this.model[i];
-			if (lines.includes(this._getLineIndexOfSpan(i))) {
-				let newSpan = { ...span };
-				delete newSpan[format];
-				delete newSpan[valueKey];
-				newModel.push(newSpan);
-			} else {
-				newModel.push({ ...span });
-			}
-		}
-		this.model = this._mergeSpans(newModel);
-		this._render();
-		this._emit('change', this.getHTML());
-	}
-
-	/**
-	 * Toggle a format on all spans in the selected lines
-	 * @param {string} format
-	 * @param {string|undefined} value
-	 */
-	toggleFormatOnLine(format, value) {
-		const valueKey = format + 'Value';
-		const lines = this._getSelectedLines();
-		if (!lines || lines.length === 0) return;
-		const allHaveFormat = this.lineHasFormat(format);
-		let newModel = [];
-		for (let i = 0; i < this.model.length; ++i) {
-			const span = this.model[i];
-			if (lines.includes(this._getLineIndexOfSpan(i))) {
-				let newSpan = { ...span };
-				if (!allHaveFormat) {
-					newSpan[format] = true;
-					if (typeof value !== 'undefined') {
-						newSpan[valueKey] = value;
-					}
-				} else {
-					delete newSpan[format];
-					delete newSpan[valueKey];
-				}
-				newModel.push(newSpan);
-			} else {
-				newModel.push({ ...span });
-			}
-		}
-		this.model = this._mergeSpans(newModel);
-		this._render();
-		this._emit('change', this.getHTML());
-	}
-
-	/**
-	 * Check if all spans in the selected lines have the format
-	 * @param {string} format
-	 * @returns {boolean|null}
-	 */
-	lineHasFormat(format) {
-		const lines = this._getSelectedLines();
-		if (!lines || lines.length === 0) return null;
-		let allHave = true;
-		for (let i = 0; i < this.model.length; ++i) {
-			const span = this.model[i];
-			if (lines.includes(this._getLineIndexOfSpan(i))) {
-				if (!span[format]) {
-					allHave = false;
-					break;
-				}
-			}
-		}
-		return allHave;
-	}
-
-	/**
-	 * Set the editor content from HTML (expects spans with class/style as output by this editor)
-	 * Falls back to plain text if parsing fails.
-	 * @param {string} html
-	 */
-	setContent(html) {
-		let model = [];
-		try {
-			const container = document.createElement('div');
-			container.innerHTML = html;
-
-			function parseSpan(span) {
-				let obj = { text: span.textContent || '' };
-				if (span.classList && span.classList.length) {
-					for (const cls of span.classList) {
-						obj[cls] = true;
-					}
-				}
-				if (span.hasAttribute && span.hasAttribute('style')) {
-					const style = span.getAttribute('style');
-					const re = /--([\w-]+)\s*:\s*([^;]+);?/g;
-					let m;
-					while ((m = re.exec(style))) {
-						const key = m[1];
-						const value = m[2].trim();
-						obj[key] = true;
-						obj[key + 'Value'] = value;
-					}
-				}
-				return obj;
-			}
-
-			function walk(node) {
-				if (node.nodeType === 3) { // text node
-					const text = node.textContent || '';
-					if (text.length > 0) {
-						let lines = text.split(/(\n)/);
-						for (let i = 0; i < lines.length; ++i) {
-							if (lines[i] === '\n') {
-								model.push({ text: '\n' });
-							} else if (lines[i]) {
-								model.push({ text: lines[i] });
-							}
-						}
-					}
-				} else if (node.nodeType === 1 && node.tagName === 'SPAN') {
-					let obj = parseSpan(node);
-					if ([...node.childNodes].every(n => n.nodeType === 3)) {
-						let text = obj.text;
-						if (text.includes('\n')) {
-							let lines = text.split(/(\n)/);
-							for (let i = 0; i < lines.length; ++i) {
-								if (lines[i] === '\n') {
-									model.push({ text: '\n' });
-								} else if (lines[i]) {
-									let newSpan = {};
-									for (const key in obj) {
-										if (key !== 'text') newSpan[key] = obj[key];
-									}
-									newSpan.text = lines[i];
-									model.push(newSpan);
-								}
-							}
-						} else {
-							let newSpan = {};
-							for (const key in obj) {
-								if (key !== 'text') newSpan[key] = obj[key];
-							}
-							newSpan.text = text;
-							model.push(newSpan);
-						}
-					} else {
-						for (const child of node.childNodes) walk(child);
-					}
-				} else if (node.nodeType === 1) {
-					for (const child of node.childNodes) walk(child);
-				}
-			}
-
-			for (const child of container.childNodes) walk(child);
-
-			model = model.filter(s => s.text && s.text.length > 0 || s.text === '\n');
-			if (model.length === 0) model = [{ text: '' }];
-		} catch (e) {
-			let text = (html || '').replace(/<[^>]+>/g, '');
-			let lines = text.split(/(\n)/);
-			for (let i = 0; i < lines.length; ++i) {
-				if (lines[i] === '\n') {
-					model.push({ text: '\n' });
-				} else if (lines[i]) {
-					model.push({ text: lines[i] });
-				}
-			}
-			if (model.length === 0) model = [{ text: '' }];
-		}
-		this.model = model;
-
-		this._render();
-		this._emit('change', this.getHTML());
-	}
-
-	/**
-	 * Generic format toggler
-	 * @param {string} format - e.g. 'bold', 'italic', 'underline', etc.
-	 * @param {string|undefined} value - optional value for the format (e.g. color)
-	 */
-	toggleFormat(format, value) {
-		const valueKey = format + 'Value';
-		const sel = this._getSelectionOffsets();
-		if (!sel) return;
-		const { start, end } = sel;
-		if (start === end) return; // No selection
-		// Determine if all selected text has the format
-		let idx = 0;
-		let allHaveFormat = true;
-		for (const span of this.model) {
-			const spanStart = idx;
-			const spanEnd = idx + span.text.length;
-			if (spanEnd <= start || spanStart >= end) {
-				// Do nowt
-			} else {
-				const selStart = Math.max(start, spanStart);
-				const selEnd = Math.min(end, spanEnd);
-				if (selEnd > selStart && !span[format]) {
-					allHaveFormat = false;
-					break;
-				}
-			}
-			idx += span.text.length;
-		}
-		const shouldAdd = !allHaveFormat;
-		// Build new model with uniform format for selection
-		idx = 0;
-		let newModel = [];
-		for (const span of this.model) {
-			const spanStart = idx;
-			const spanEnd = idx + span.text.length;
-			if (spanEnd <= start || spanStart >= end) {
-				// Not affected
-				newModel.push({ ...span });
-			} else {
-				// Split as needed
-				if (spanStart < start) {
-					newModel.push({ ...span, text: span.text.slice(0, start - spanStart) });
-				}
-				const selStart = Math.max(start, spanStart);
-				const selEnd = Math.min(end, spanEnd);
-				const selectedText = span.text.slice(selStart - spanStart, selEnd - spanStart);
-				let newSpan = { ...span, text: selectedText };
-				if (shouldAdd) {
-					newSpan[format] = true;
-					if (typeof value !== 'undefined') {
-						newSpan[valueKey] = value;
-					}
-				} else {
-					// Yall had no clue there was such a thing as delete in javascript
-					delete newSpan[format];
-					delete newSpan[valueKey];
-				}
-				newModel.push(newSpan);
-				if (spanEnd > end) {
-					newModel.push({ ...span, text: span.text.slice(end - spanStart) });
-				}
-			}
-			idx += span.text.length;
-		}
-		// Merge adjacent spans with same formatting
-		this.model = this._mergeSpans(newModel);
-		this._render();
-		this._emit('change', this.getHTML());
-	}
-
-	/**
-	 * Explicitly add a format to the current selection
-	 * @param {string} format
-	 * @param {string|undefined} value
-	 */
-	addFormat(format, value) {
-		const valueKey = format + 'Value';
-		const sel = this._getSelectionOffsets();
-		if (!sel) return;
-		const { start, end } = sel;
-		if (start === end) return; // No selection
-		let idx = 0;
-		let newModel = [];
-		for (const span of this.model) {
-			const spanStart = idx;
-			const spanEnd = idx + span.text.length;
-			if (spanEnd <= start || spanStart >= end) {
-				// Not affected
-				newModel.push({ ...span });
-			} else {
-				// Split as needed
-				if (spanStart < start) {
-					newModel.push({ ...span, text: span.text.slice(0, start - spanStart) });
-				}
-				const selStart = Math.max(start, spanStart);
-				const selEnd = Math.min(end, spanEnd);
-				const selectedText = span.text.slice(selStart - spanStart, selEnd - spanStart);
-				let newSpan = { ...span, text: selectedText };
-				newSpan[format] = true;
-				if (typeof value !== 'undefined') {
-					newSpan[valueKey] = value;
-				}
-				newModel.push(newSpan);
-				if (spanEnd > end) {
-					newModel.push({ ...span, text: span.text.slice(end - spanStart) });
-				}
-			}
-			idx += span.text.length;
-		}
-		this.model = this._mergeSpans(newModel);
-		this._render();
-		this._emit('change', this.getHTML());
-	}
-
-	/**
-	 * Explicitly remove a format from the current selection
-	 * @param {string} format
-	 */
-	removeFormat(format) {
-		const valueKey = format + 'Value';
-		const sel = this._getSelectionOffsets();
-		if (!sel) return;
-		const { start, end } = sel;
-		if (start === end) return; // No selection
-		let idx = 0;
-		let newModel = [];
-		for (const span of this.model) {
-			const spanStart = idx;
-			const spanEnd = idx + span.text.length;
-			if (spanEnd <= start || spanStart >= end) {
-				// Not affected
-				newModel.push({ ...span });
-			} else {
-				// Split as needed
-				if (spanStart < start) {
-					newModel.push({ ...span, text: span.text.slice(0, start - spanStart) });
-				}
-				const selStart = Math.max(start, spanStart);
-				const selEnd = Math.min(end, spanEnd);
-				const selectedText = span.text.slice(selStart - spanStart, selEnd - spanStart);
-				let newSpan = { ...span, text: selectedText };
-				delete newSpan[format];
-				delete newSpan[valueKey];
-				newModel.push(newSpan);
-				if (spanEnd > end) {
-					newModel.push({ ...span, text: span.text.slice(end - spanStart) });
-				}
-			}
-			idx += span.text.length;
-		}
-		this.model = this._mergeSpans(newModel);
-		this._render();
-		this._emit('change', this.getHTML());
-	}
-
-	/**
-	 * Check if the current selection has a given format applied
-	 * @param {string} format
-	 * @returns {boolean|null} true if all selected text has the format, false if none, null if no selection
-	 */
-	hasFormat(format) {
-		const sel = this._getSelectionOffsets();
-		if (!sel) return null;
-		const { start, end } = sel;
-		if (start === end) return null; // No selection
-		let idx = 0;
-		let allHave = true;
-		let noneHave = true;
-		for (const span of this.model) {
-			const spanStart = idx;
-			const spanEnd = idx + span.text.length;
-			if (spanEnd <= start || spanStart >= end) {
-				// Not affected
-			} else {
-				const selStart = Math.max(start, spanStart);
-				const selEnd = Math.min(end, spanEnd);
-				if (selEnd > selStart) {
-					if (!span[format]) {
-						allHave = false;
-					} else {
-						noneHave = false;
-					}
-				}
-			}
-			idx += span.text.length;
-		}
-		// If all selected have the format, return true; if none, false; if mixed, return either (here: true if all, else false)
-		return allHave;
-	}
-
-	/**
-	 * Check if the current selection contains any part with the given format
-	 * @param {string} format
-	 * @returns {boolean|null} true if any selected text has the format, false if none, null if no selection
-	 */
-	hasFormatContained(format) {
-		const sel = this._getSelectionOffsets();
-		if (!sel) return null;
-		const { start, end } = sel;
-		if (start === end) return null; // No selection
-		let idx = 0;
-		for (const span of this.model) {
-			const spanStart = idx;
-			const spanEnd = idx + span.text.length;
-			if (spanEnd <= start || spanStart >= end) {
-				// Not affected
-			} else {
-				const selStart = Math.max(start, spanStart);
-				const selEnd = Math.min(end, spanEnd);
-				if (selEnd > selStart && span[format]) {
-					return true;
-				}
-			}
-			idx += span.text.length;
-		}
-		return false;
-	}
-
-	/**
-	 * Remove all formatting from the entire editor content
-	 */
-	removeAllFormatting() {
-		this.model = this.model.map(span => ({ text: span.text }));
-		this._render();
-		this._emit('change', this.getHTML());
-	}
-
-	/**
-	 * Remove all formatting from the selected text only
-	 */
-	removeFormattingOnSelected() {
-		const sel = this._getSelectionOffsets();
-		if (!sel) return;
-		const { start, end } = sel;
-		if (start === end) return; // No selection
-		let idx = 0;
-		let newModel = [];
-		for (const span of this.model) {
-			const spanStart = idx;
-			const spanEnd = idx + span.text.length;
-			if (spanEnd <= start || spanStart >= end) {
-				// Not affected
-				newModel.push({ ...span });
-			} else {
-				// Split as needed
-				if (spanStart < start) {
-					newModel.push({ ...span, text: span.text.slice(0, start - spanStart) });
-				}
-				const selStart = Math.max(start, spanStart);
-				const selEnd = Math.min(end, spanEnd);
-				const selectedText = span.text.slice(selStart - spanStart, selEnd - spanStart);
-				newModel.push({ text: selectedText });
-				if (spanEnd > end) {
-					newModel.push({ ...span, text: span.text.slice(end - spanStart) });
-				}
-			}
-			idx += span.text.length;
-		}
-		this.model = this._mergeSpans(newModel);
-		this._render();
-		this._emit('change', this.getHTML());
-	}
-
-	/**
-	 * List all formatting on the selected text
-	 * @returns {Array<Object>} Array of formatting objects for each formatted region in selection
-	 */
-	listFormattingOnSelected() {
-		const sel = this._getSelectionOffsets();
-		if (!sel) return [];
-		const { start, end } = sel;
-		if (start === end) return [];
-		let idx = 0;
-		let result = [];
-		for (const span of this.model) {
-			const spanStart = idx;
-			const spanEnd = idx + span.text.length;
-			if (spanEnd <= start || spanStart >= end) {
-				// Not affected
-			} else {
-				const selStart = Math.max(start, spanStart);
-				const selEnd = Math.min(end, spanEnd);
-				if (selEnd > selStart) {
-					let fmt = {};
-					for (const key of Object.keys(span)) {
-						if (key !== 'text') {
-							fmt[key] = span[key];
-						}
-					}
-					result.push(fmt);
-				}
-			}
-			idx += span.text.length;
-		}
-		return result;
-	}
-	/**
-	 * Get the current HTML content of the editor
-	 * @returns {string}
-	 */
-	getHTML() {
-		let html = '';
-		for (const span of this.model) {
-			let classList = [];
-			let styleList = [];
-			for (const key of Object.keys(span)) {
-				if (key === 'text') continue;
-				if (key.endsWith('Value')) {
-					const format = key.slice(0, -5);
-					if (span[format]) {
-						styleList.push(`--${format}: ${span[key]}`);
-					}
-				} else if (span[key]) {
-					classList.push(key);
-				}
-			}
-			const classAttr = classList.length ? ` class="${classList.join(' ')}"` : '';
-			const styleAttr = styleList.length ? ` style="${styleList.join('; ')};"` : '';
-			html += `<span${classAttr}${styleAttr}>${this._escapeHTML(span.text)}</span>`;
-		}
-		return html || '<br>';
-	}
-
-	// --- Private helpers ---
-
-// --- Private helpers ---
-
-// Bind events for input and selection
-_bindEvents() {
-	this.el.addEventListener('input', (e) => {
-		this._updateModelFromDOM();
-		this.model = this._mergeSpans(this.model);
-		this._render();
-		this._emit('change', this.getHTML());
-	});
-	this.el.addEventListener('beforeinput', (e) => {
-		if (["formatBold", "formatItalic", "formatUnderline", "insertParagraph", "insertLineBreak"].includes(e.inputType)) {
-			e.preventDefault();
-		}
-	});
-	this._selectionHandler = () => {
-		const sel = window.getSelection();
-		if (!sel || sel.rangeCount === 0) return;
-		const range = sel.getRangeAt(0);
-		if (this.el.contains(range.startContainer) || this.el === range.startContainer) {
-			this._emit('select');
-		}
-	};
-	document.addEventListener('selectionchange', this._selectionHandler);
-}
-
-// Split a span at a given offset, returns [before, after]
-_splitSpan(span, offset) {
-	if (offset <= 0) return [null, { ...span }];
-	if (offset >= span.text.length) return [{ ...span }, null];
-	let before = { ...span, text: span.text.slice(0, offset) };
-	let after = { ...span, text: span.text.slice(offset) };
-	return [before, after];
-}
-
-// Split model at a given offset, returns [before, after]
-_splitModelAtOffset(model, offset) {
-	let idx = 0;
-	let before = [], after = [];
-	for (let i = 0; i < model.length; ++i) {
-		let span = model[i];
-		if (idx + span.text.length < offset) {
-			before.push({ ...span });
-			idx += span.text.length;
-		} else if (idx <= offset && offset < idx + span.text.length) {
-			let [b, a] = this._splitSpan(span, offset - idx);
-			if (b) before.push(b);
-			if (a) after.push(a);
-			idx += span.text.length;
-		} else {
-			after.push({ ...span });
-			idx += span.text.length;
-		}
-	}
-	return [before, after];
-}
-
-// Merge adjacent spans with identical formatting
-_mergeSpans(spans) {
-	if (!spans.length) return [{ text: '' }];
-	let merged = [{ ...spans[0] }];
-	for (let i = 1; i < spans.length; ++i) {
-		const prev = merged[merged.length - 1];
-		const curr = spans[i];
-		const prevKeys = Object.keys(prev).filter(k => k !== 'text');
-		const currKeys = Object.keys(curr).filter(k => k !== 'text');
-		const sameKeys = prevKeys.length === currKeys.length && prevKeys.every(k => curr[k] === prev[k]);
-		if (prev.text && curr.text && sameKeys) {
-			prev.text += curr.text;
-		} else {
-			merged.push({ ...curr });
-		}
-	}
-	return merged.filter(s => s.text);
-}
-
-// Map DOM selection to model offsets
-_getSelectionOffsets() {
-	const sel = window.getSelection();
-	if (!sel || sel.rangeCount === 0) return null;
-	const range = sel.getRangeAt(0);
-	if (!this.el.contains(range.startContainer) || !this.el.contains(range.endContainer)) return null;
-	let start = this._getOffsetFromNode(range.startContainer, range.startOffset);
-	let end = this._getOffsetFromNode(range.endContainer, range.endOffset);
-	if (start > end) [start, end] = [end, start];
-	return { start, end };
-}
-
-// Update model from DOM input (robust diffing)
-_updateModelFromDOM() {
-	const text = this.el.innerText.replace(/\r?\n$/, '');
-	let oldModel = this.model;
-	let newModel = [];
-	let idx = 0, oldIdx = 0, oldSpanIdx = 0;
-	while (idx < text.length) {
-		if (oldSpanIdx < oldModel.length) {
-			let span = oldModel[oldSpanIdx];
-			let matchLen = 0;
-			for (let k = 0; k < span.text.length && idx + k < text.length; ++k) {
-				if (text[idx + k] === span.text[k]) {
-					matchLen++;
-				} else {
-					break;
-				}
-			}
-			if (matchLen > 0) {
-				newModel.push({ ...span, text: text.substr(idx, matchLen) });
-				idx += matchLen;
-				oldSpanIdx++;
-				continue;
-			}
-			// Divergence: insert new text, inherit formatting from previous span if possible
-			let insertStart = idx;
-			let nextMatchIdx = -1;
-			for (let j = idx + 1; j <= text.length; ++j) {
-				let sub = text.slice(j, j + span.text.length);
-				if (sub && sub === span.text.slice(0, sub.length)) {
-					nextMatchIdx = j;
-					break;
-				}
-			}
-			let newText = text.slice(insertStart, nextMatchIdx === -1 ? text.length : nextMatchIdx);
-			let fmtSpan = oldSpanIdx > 0 ? oldModel[oldSpanIdx - 1] : span;
-			let newSpan = { text: newText };
-			for (const key of Object.keys(fmtSpan)) {
-				if (key !== 'text') newSpan[key] = fmtSpan[key];
-			}
-			newModel.push(newSpan);
-			idx += newText.length;
-			if (nextMatchIdx !== -1) {
-				// Resume matching with current span
-			}
-		} else {
-			// New text at the end, inherit formatting from last span if possible
-			let fmtSpan = oldModel.length ? oldModel[oldModel.length - 1] : {};
-			let newSpan = { text: text[idx] };
-			for (const key of Object.keys(fmtSpan)) {
-				if (key !== 'text') newSpan[key] = fmtSpan[key];
-			}
-			newModel.push(newSpan);
-			idx++;
-		}
-	}
-	// Split at line breaks
-	let splitModel = [];
-	for (const span of newModel) {
-		if (span.text.includes('\n')) {
-			let lines = span.text.split(/(\n)/);
-			for (let i = 0; i < lines.length; ++i) {
-				if (lines[i] === '\n') {
-					splitModel.push({ text: '\n' });
-				} else if (lines[i]) {
-					let newSpan = {};
-					for (const key in span) {
-						if (key !== 'text') newSpan[key] = span[key];
-					}
-					newSpan.text = lines[i];
-					splitModel.push(newSpan);
-				}
-			}
-		} else {
-			let newSpan = {};
-			for (const key in span) {
-				if (key !== 'text') newSpan[key] = span[key];
-			}
-			newSpan.text = span.text;
-			splitModel.push(newSpan);
-		}
-	}
-	newModel = splitModel.filter(s => s.text && s.text.length > 0 || s.text === '\n');
-	if (newModel.length === 0) newModel = [{ text: '' }];
-	this.model = newModel;
-}
-
-	/**
-	 * Render the model to the contenteditable div
-	 */
-	_render() {
-				console.log(this.model);
-			// Save selection
-			const selInfo = this._getSelectionOffsets();
-			// Build HTML
-			let html = '';
-			for (const span of this.model) {
-				if (span.text === '\n') {
-					html += '<br>';
-					continue;
-				}
-				let classList = [];
-				let styleList = [];
-				for (const key of Object.keys(span)) {
-					if (key === 'text') continue;
-					if (key.endsWith('Value')) {
-						const format = key.slice(0, -5);
-						if (span[format]) {
-							styleList.push(`--${format}: ${span[key]}`);
-						}
-					} else if (span[key]) {
-						classList.push(key);
-					}
-				}
-				const classAttr = classList.length ? ` class="${classList.join(' ')}"` : '';
-				const styleAttr = styleList.length ? ` style="${styleList.join('; ')};"` : '';
-				html += `<span${classAttr}${styleAttr}>${this._escapeHTML(span.text)}</span>`;
-			}
-			this.el.innerHTML = html || '<br>';
-			// Restore selection
-			this._restoreSelectionOffsets(selInfo);
-	}
-
-	/**
-	 * Update the model from the DOM (plain text only, formatting is lost on direct input)
-	 */
-	_updateModelFromDOM() {
-		// Get plain text
-		const text = this.el.innerText.replace(/\r?\n$/, ''); // Remove trailing newline
-		let newModel = [];
-		let oldModel = this.model;
-		let textPos = 0;
-		let oldSpanIdx = 0;
-		let oldSpanOffset = 0;
-		while (textPos < text.length) {
-			if (oldSpanIdx < oldModel.length) {
-				let span = oldModel[oldSpanIdx];
-				let spanRem = span.text.length - oldSpanOffset;
-				let matchLen = 0;
-				// Find how much of the text matches the old span
-				for (let k = 0; k < spanRem && textPos + k < text.length; ++k) {
-					if (text[textPos + k] === span.text[oldSpanOffset + k]) {
-						matchLen++;
-					} else {
-						break;
-					}
-				}
-				if (matchLen > 0) {
-					newModel.push({ ...span, text: text.substr(textPos, matchLen) });
-					textPos += matchLen;
-					oldSpanOffset += matchLen;
-					if (oldSpanOffset >= span.text.length) {
-						oldSpanIdx++;
-						oldSpanOffset = 0;
-					}
-					continue;
-				}
-				// If no match, insert new text up to the next span boundary
-				let nextSpanIdx = oldSpanIdx + 1;
-				let insertEnd = text.length;
-				if (nextSpanIdx < oldModel.length) {
-					let nextSpanText = oldModel[nextSpanIdx].text;
-					let boundaryIdx = -1;
-					if (text.substr(textPos, nextSpanText.length) === nextSpanText) {
-						boundaryIdx = textPos;
-					} else {
-						// Only allow exact match at boundary
-						for (let i = 1; i <= text.length - textPos - nextSpanText.length + 1; ++i) {
-							if (text.substr(textPos + i, nextSpanText.length) === nextSpanText) {
-								boundaryIdx = textPos + i;
-								break;
-							}
-						}
-					}
-					if (boundaryIdx !== -1) {
-						insertEnd = boundaryIdx;
-					}
-				}
-				if (insertEnd > textPos) {
-					let fmtSpan = span;
-					let newSpan = { text: text.substring(textPos, insertEnd) };
-					for (const key of Object.keys(fmtSpan)) {
-						if (key !== 'text') newSpan[key] = fmtSpan[key];
-					}
-					newModel.push(newSpan);
-				}
-				textPos = insertEnd;
-				if (nextSpanIdx < oldModel.length && text.substr(textPos, oldModel[nextSpanIdx].text.length) === oldModel[nextSpanIdx].text) {
-					oldSpanIdx = nextSpanIdx;
-					oldSpanOffset = 0;
-				} else {
-					// If not matching, stay on current span
-				}
-				continue;
-			} else {
-				// New text at the end, inherit formatting from last span if possible
-				let fmtSpan = oldModel.length ? oldModel[oldModel.length - 1] : {};
-				let newSpan = { text: text[textPos] };
-				for (const key of Object.keys(fmtSpan)) {
-					if (key !== 'text') newSpan[key] = fmtSpan[key];
-				}
-				newModel.push(newSpan);
-				textPos++;
-			}
-		}
-		// Split at line breaks
-		let splitModel = [];
-		for (const span of newModel) {
-			if (span.text.includes('\n')) {
-				let lines = span.text.split(/(\n)/);
-				for (let i = 0; i < lines.length; ++i) {
-					if (lines[i] === '\n') {
-						splitModel.push({ text: '\n' });
-					} else if (lines[i]) {
-						let newSpan = { ...span, text: lines[i] };
-						delete newSpan.text; newSpan.text = lines[i];
-						splitModel.push(newSpan);
-					}
-				}
-			} else {
-				splitModel.push(span);
-			}
-		}
-		newModel = splitModel.filter(s => s.text && s.text.length > 0 || s.text === '\n');
-		if (newModel.length === 0) newModel = [{ text: '' }];
-		this.model = newModel;
-	}
-
-	/**
-	 * Helper: get line indices of spans in the model
-	 * Returns array of line indices for selected lines
-	 */
-	_getSelectedLines() {
-		const sel = this._getSelectionOffsets();
-		if (!sel) return [];
-		const { start, end } = sel;
-		// If collapsed, treat as selecting the line at cursor
-		let idx = 0;
-		let charToLine = [];
-		let line = 0;
-		for (const span of this.model) {
-			for (let i = 0; i < span.text.length; ++i) {
-				charToLine.push(line);
-				if (span.text[i] === '\n') line++;
-			}
-		}
-		if (charToLine.length === 0) return [];
-		let startLine = charToLine[Math.min(start, charToLine.length - 1)];
-		let endLine = charToLine[Math.max(end - 1, 0)];
-		if (start === end) endLine = startLine;
-		let lines = [];
-		for (let l = startLine; l <= endLine; ++l) lines.push(l);
-		return lines;
-	}
-
-	/**
-	 * Helper: get line index for a span in the model
-	 * @param {number} spanIdx
-	 * @returns {number}
-	 */
-	_getLineIndexOfSpan(spanIdx) {
-		let idx = 0;
-		let line = 0;
-		for (let i = 0; i < this.model.length; ++i) {
-			const span = this.model[i];
-			if (i === spanIdx) return line;
-			for (let j = 0; j < span.text.length; ++j) {
-				if (span.text[j] === '\n') line++;
-			}
-		}
-		return line;
-	}
-
-	/**
-	 * Merge adjacent spans with same formatting
-	 */
-	_mergeSpans(spans) {
-		if (!spans.length) return [{ text: '' }];
-		let merged = [{ ...spans[0] }];
-		for (let i = 1; i < spans.length; ++i) {
-			const prev = merged[merged.length - 1];
-			const curr = spans[i];
-			// Compare all keys except text
-			const prevKeys = Object.keys(prev).filter(k => k !== 'text');
-			const currKeys = Object.keys(curr).filter(k => k !== 'text');
-			const sameKeys = prevKeys.length === currKeys.length && prevKeys.every(k => curr[k] === prev[k]);
-			if (prev.text && curr.text && sameKeys) {
-				prev.text += curr.text;
-			} else {
-				merged.push({ ...curr });
-			}
-		}
-		return merged.filter(s => s.text);
-	}
-
-	/**
-	 * Get selection offsets (start/end) in plain text
-	 */
-	_getSelectionOffsets() {
-		const sel = window.getSelection();
-		if (!sel || sel.rangeCount === 0) return null;
-		const range = sel.getRangeAt(0);
-		// Only support selection within the editor
-		if (!this.el.contains(range.startContainer) || !this.el.contains(range.endContainer)) return null;
-		// Walk DOM to compute offset
-		let start = this._getOffsetFromNode(range.startContainer, range.startOffset);
-		let end = this._getOffsetFromNode(range.endContainer, range.endOffset);
-		if (start > end) [start, end] = [end, start];
-		return { start, end };
-	}
-
-	/**
-	 * Restore selection from offsets
-	 */
-	_restoreSelectionOffsets(selInfo) {
-		if (!selInfo) return;
-		const { start, end } = selInfo;
-		// Walk DOM to find nodes
-		let node = this.el;
-		let offset = 0;
-		let startNode = null, startOffset = 0, endNode = null, endOffset = 0;
-		function walk(node) {
-			for (let child of node.childNodes) {
-				if (child.nodeType === 3) { // text
-					const len = child.textContent.length;
-					if (!startNode && offset + len >= start) {
-						startNode = child;
-						startOffset = start - offset;
-					}
-					if (!endNode && offset + len >= end) {
-						endNode = child;
-						endOffset = end - offset;
-					}
-					offset += len;
-				} else {
-					walk(child);
-				}
-			}
-		}
-		walk(node);
-		if (startNode && endNode) {
-			const sel = window.getSelection();
-			const range = document.createRange();
-			try {
-				range.setStart(startNode, startOffset);
-				range.setEnd(endNode, endOffset);
-				sel.removeAllRanges();
-				sel.addRange(range);
-			} catch (e) { }
-		}
-	}
-
-	/**
-	 * Get offset in plain text from a node/offset
-	 */
-	_getOffsetFromNode(node, nodeOffset) {
-		let offset = 0;
-		function walk(n) {
-			if (n === node) {
-				if (n.nodeType === 3) {
-					offset += nodeOffset;
-				}
-				return true;
-			}
-			if (n.nodeType === 3) {
-				offset += n.textContent.length;
-			} else {
-				for (let child of n.childNodes) {
-					if (walk(child)) return true;
-				}
-			}
-			return false;
-		}
-		walk(this.el);
-		return offset;
-	}
-
-	/**
-	 * Escape HTML for rendering
-	 */
-	_escapeHTML(str) {
-		return str.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+			return outLine;
+		});
 	}
 }
 

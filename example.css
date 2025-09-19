@@ -68,6 +68,12 @@ body {
 	background-color: var(--highlight);
 }
 
+/* Base line container so each line is its own row */
+.line {
+	display: block;
+	width: 100%;
+}
+
 /* Alignment classes for line formatting */
 .align-left {
 	display: inline-block;

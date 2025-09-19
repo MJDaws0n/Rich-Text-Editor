@@ -27,17 +27,21 @@
 	<script>
 		// Example usage
 		const editor = new RichTextEditor(document.getElementById('editor'));
-		document.getElementById('bold-btn').onclick = () => editor.bold();
+
+		document.getElementById('bold-btn').onclick = () => editor.toggleFormat('bold');
 		document.getElementById('italic-btn').onclick = () => editor.toggleFormat('italic');
 		document.getElementById('underline-btn').onclick = () => editor.toggleFormat('underline');
 		document.getElementById('strikethrough-btn').onclick = () => editor.toggleFormat('strikethrough');
-		document.getElementById('highlight-color').oninput = (e) => editor.highlight(e.target.value);
+
+
+		document.getElementById('highlight-color').oninput = (e) => editor.applyFormat('highlight', { '--highlight': e.target.value });
 		document.getElementById('highlight-btn').onclick = () => editor.removeFormat('highlight');
 		document.getElementById('remove-formatting-btn').onclick = (e) => {
-			if(editor.hasFormat('') !== null) { // Will return null if no text is selected
-				editor.removeFormattingOnSelected();
+			e.preventDefault();
+			if(editor.getCaretIndex() - editor.getCaretStartIndex() > 0 && editor.focused()) { // Will return null if no text is selected
+				editor.unapplyFormat();
 			} else{
-				editor.removeAllFormatting();
+				editor.unapplyAllFormat();
 			}
 		};
 
@@ -53,8 +57,8 @@
 			editor.removeFormatFromLine('align-right');
 		}
 
-		editor.on('change', html => console.log('New content:', html));
-		editor.on('select', () => {
+		editor.on('change', (content, html) => console.log(content));
+		editor.on('select', ([start, end], text) => {
 			if (editor.hasFormat('bold')) {
 				document.getElementById('bold-btn').classList.add('active');
 			} else {
@@ -80,35 +84,12 @@
 			} else {
 				document.getElementById('highlight-btn').classList.remove('active');
 			}
-			// Alignment button active state
-			if (editor.lineHasFormat('align-left')) {
-				document.getElementById('align-left-btn').classList.add('active');
-			} else {
-				document.getElementById('align-left-btn').classList.remove('active');
-			}
-			if (editor.lineHasFormat('align-center')) {
-				document.getElementById('align-center-btn').classList.add('active');
-			} else {
-				document.getElementById('align-center-btn').classList.remove('active');
-			}
-			if (editor.lineHasFormat('align-right')) {
-				document.getElementById('align-right-btn').classList.add('active');
-			} else {
-				document.getElementById('align-right-btn').classList.remove('active');
-			}
 		});
 
 		// Set some test content using setContent
 		editor.setContent(
-			'<span class="bold">Bold </span>' +
-			'<span class="italic">Italic </span>' +
-			'<span class="underline">Underline </span>' +
-			'<span class="strikethrough">Strike </span>' +
-			'<span class="highlight" style="--highlight: #ff0;">Yellow Highlight </span>' +
-			'<span class="highlight" style="--highlight: #0af;">Blue Highlight</span>'
+			`<div><span class="bold">Bold</span><span> </span><span class="italic">italic</span><span> </span><span class="underline">underline</span><span> </span><span class="strikethrough">strikethrough</span><span> </span><span class="highlight" style="--highlight: #fffb00;">highlight</span></div><div class="align-center"><span>center</span></div><`
 		);
 	</script>
 </body>
 </html>
-
-FUTURE ME NEW LINES DONT WORK
