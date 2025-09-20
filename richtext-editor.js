@@ -135,7 +135,7 @@ class RichTextEditor {
      * @returns {void}
      */
     toggleFormat(className, styles = {}) {
-        if (this.hasFormat(className)) {
+        if (this.lineHasFormat(className)) {
             this.unapplyFormat(className);
         } else {
             this.applyFormat(className, styles);
@@ -1055,7 +1055,7 @@ class RichTextEditor {
 
             if (node.nodeType === 3) {
                 const nextIndex = index + node.textContent.length;
-                if (targetIndex <= nextIndex) {
+                if (targetIndex <= nextIndex && targetIndex - index >= 0) {
                     range.setStart(node, targetIndex - index);
                     range.collapse(true);
                     sel.removeAllRanges();
