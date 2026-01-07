@@ -60,7 +60,6 @@ class RichTextEditor {
      * @private
      */
     _onSelectionChange() {
-        console.log('selectionchange');
         // Only emit if selection is in this editor
         const sel = window.getSelection?.();
         if (!sel || sel.rangeCount === 0) return;
@@ -461,7 +460,6 @@ class RichTextEditor {
      * @returns {void}
      */
     unapplyAllFormat(className) {
-        console.log('here');
         const selectionStart = this.getCaretStartIndex();
         const selectionEnd = this.getCaretIndex();
 
@@ -788,8 +786,6 @@ class RichTextEditor {
 
         // Emit change with (content, html)
         this._emit('change', this.content, this.textarea.innerHTML);
-
-        console.log(this.content);
     }
 
     /**
