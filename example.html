@@ -35,7 +35,7 @@
 
 
 		document.getElementById('highlight-color').oninput = (e) => editor.applyFormat('highlight', { '--highlight': e.target.value });
-		document.getElementById('highlight-btn').onclick = () => editor.removeFormat('highlight');
+		document.getElementById('highlight-btn').onclick = () => editor.unapplyFormat('highlight');
 		document.getElementById('remove-formatting-btn').onclick = (e) => {
 			e.preventDefault();
 			if(editor.getCaretIndex() - editor.getCaretStartIndex() > 0 && editor.focused()) { // Will return null if no text is selected
